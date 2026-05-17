@@ -1,0 +1,132 @@
+# 공통 관심사 (Cross-Cutting Concerns)
+
+## 실행 모드
+
+모든 봇은 다음 모드를 지원한다. `--dry-run` 플래그 또는 `.env`의 `DRY_RUN=true`로 활성화.
+
+| 모드 | 설명 | dal.wiki API 호출 |
+|------|------|-----------------|
+| **Dry-Run** | 변경사항을 로그로만 출력 | 없음 (가짜 ID 반환: `"dry-{timestamp}"`) |
+| **Live** | 실제 POST/PATCH/DELETE 수행 | 있음 |
+| **Backfill** | 과거 날짜 범위 소급 등록 | 있음 |
+| **Resync** | content_hash 무관하게 강제 PATCH | 있음 |
+| **Cleanup** | 오래된 이벤트 삭제 | DELETE 있음 |
+
+---
+
+## 중복 제거 (Deduplication)
+
+### 레이어 1 — 소스 정규화
+
+외부 소스에서 데이터를 수집한 직후, 봇 내부에서 canonical key를 생성한다.
+
+```
+canonical_key = f"{date}_{region}_{distance_bucket}"   # runbot 예시
+canonical_key = f"{manufacturer}_{jan_code}"            # figurebot 예시
+canonical_key = f"{game_id}_{notice_id}"               # onlinegamebot 예시
+```
+
+### 레이어 2 — Content Hash 비교
+
+```python
+current_hash = hash(title + date + url + description)
+stored_hash  = db.get(canonical_key).content_hash
+
+if stored_hash is None:
+    action = "NEW"       # → POST
+elif current_hash != stored_hash:
+    action = "CHANGED"   # → PATCH
+else:
+    action = "UNCHANGED" # → 건너뜀
+```
+
+### 레이어 3 — dal.wiki ID 추적
+
+- POST 성공 → 반환된 UUID를 로컬 DB `dalwiki_id`에 저장
+- PATCH 시 저장된 UUID 사용; 없으면 POST로 대체 (복구 경로)
+- DELETE 시 `dalwiki_id`를 NULL로 초기화
+
+---
+
+## 환경변수 구성
+
+### 공통 (전 봇 공유)
+
+| 변수 | 설명 |
+|------|------|
+| `DALWIKI_API_BASE` | API 기본 URL (`https://api.dal.wiki`) |
+| `DALWIKI_API_KEY` | Bearer 인증 토큰 (없으면 미인증 접근) |
+| `DRY_RUN` | `true` 설정 시 드라이런 모드 |
+| `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` |
+| `LOG_DIR` | 로그 파일 저장 경로 |
+
+### 봇별
+
+| 변수 패턴 | 예시 |
+|-----------|------|
+| `{NAME}_TOPIC_ID` | `MARATHON_TOPIC_ID`, `KBO_TOPIC_ID` |
+| `{GAME}_TOPIC_ID` + `UNIFIED_TOPIC_ID` | dual-posting 봇 |
+| 소스별 API 키 | `TOURAPI_KEY`, `FOOTBALL_DATA_API_KEY` |
+
+---
+
+## 실행 스케줄
+
+Windows 작업 스케줄러가 `.bat` 파일을 주기 실행한다.
+
+| 파일명 패턴 | 주기 예시 |
+|------------|----------|
+| `run.bat` | 매일 1회 (새벽 시간대) |
+| `매일_run.bat` | 매일 |
+| `주1회_*.bat` | 매주 1회 |
+| `주2회_*.bat` | 매주 2회 |
+| `dry_run.bat` | 수동 테스트용 |
+| `first_run.bat` | 초기 설치 시 1회 |
+
+---
+
+## 로깅
+
+- 모든 봇은 `logging` 모듈 사용
+- 포맷: `{timestamp} [{level}] {message}`
+- 파일 로그 + 콘솔 출력 (기본)
+- 중요 이벤트: POST/PATCH/DELETE 성공·실패 결과를 INFO 레벨로 기록
+- API 오류: 상태 코드 + 응답 본문을 WARNING/ERROR로 기록
+
+---
+
+## HTTP 세션 관리
+
+- 프로세스당 `requests.Session()` 싱글턴 하나를 공유하여 연결 재사용
+- `Content-Type: application/json` 헤더를 세션 레벨에서 설정
+- 봇별 `User-Agent` 문자열 설정 (소스 사이트 차단 방지)
+
+---
+
+## 시간대 처리
+
+- 모든 이벤트는 `Asia/Seoul` (KST, UTC+9) 기준으로 처리
+- 외부 소스가 UTC로 반환하는 경우 KST로 변환 후 저장
+- ISO 8601 형식: `YYYY-MM-DDTHH:MM:SS+09:00`
+- `naive datetime` 사용 금지; 항상 timezone-aware datetime 사용
+
+---
+
+## HTML 이스케이프 규칙
+
+description에 외부 데이터를 포함할 때:
+
+```python
+import html
+safe_text = html.escape(user_text)          # 일반 텍스트
+safe_url  = html.escape(url, quote=True)   # URL
+```
+
+---
+
+## 봇 대시보드 추적
+
+모든 봇 실행은 `track.py`를 통해 중앙 대시보드에 기록된다.
+
+- 신규 봇을 추가할 때 대시보드 레이블도 함께 등록해야 한다
+- `dashboard.py`로 현황 조회 가능
