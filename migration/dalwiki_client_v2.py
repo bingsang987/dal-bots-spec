@@ -40,7 +40,7 @@ def _get_session() -> requests.Session:
         _session = requests.Session()
         _session.headers.update({"Content-Type": "application/json"})
         if API_KEY:
-            _session.headers.update({"Authorization": f"Bearer {API_KEY}"})
+            _session.headers.update({"X-Api-Key": API_KEY})
     return _session
 
 
