@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ── 설정 ────────────────────────────────────────────────────────────────────
 import os
 
-API_BASE = os.environ.get("DALWIKI_API_BASE", "https://api.dal.wiki")
+API_BASE = os.environ.get("DALWIKI_API_BASE", "https://api.dal.wiki/api-reference")
 API_KEY  = os.environ.get("DALWIKI_API_KEY", "")
 TIMEOUT  = int(os.environ.get("DALWIKI_TIMEOUT", "20"))
 DRY_RUN  = os.environ.get("DRY_RUN", "false").lower() == "true"
