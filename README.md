@@ -4,6 +4,34 @@ dal.wiki 캘린더에 이벤트를 자동 등록하는 봇들의 구조와 동�
 
 이 명세서를 기반으로 새로운 봇을 처음부터 구현할 수 있도록 작성되었습니다.
 
+## 공통 클라이언트 패키지 `dalwiki_client`
+
+`src/dalwiki_client/`에 dal.wiki API v2 공통 클라이언트가 패키지 형태로 들어있다. 봇별 자체 구현(`dalwiki.py` / `dalwiki_client.py`) 대신 이것을 쓰면 다음 기능을 자동으로 얻는다:
+
+- `/events/list` 1000 cap 자동 분할 (truncation 감지 → 시간 윈도우 반으로 재호출)
+- `update_event` 404 시 자동 fallback (`update_or_create_event` 헬퍼)
+- `categoryIds`, `perDateLimit`, `tz` 신 API 파라미터 지원
+- ISO Z 포맷 변환 헬퍼 (datetime aware / Unix ms / 이미 ISO 문자열 모두 입력 가능)
+- DRY_RUN 환경변수 분기, 100자 summary 자동 클립, 429/5xx 지수 백오프 재시도
+
+설치 (각 봇 venv에서):
+
+```bash
+pip install -e C:/Users/gamer/Documents/GitHub/dal-bots-spec
+```
+
+사용 예:
+
+```python
+from dalwiki_client import list_events, create_event, update_or_create_event
+
+events = list_events(topic_id="...", from_=start_dt, to=end_dt, category_ids=["..."])
+new_id = create_event(topic_id="...", summary="...", start=dt, end=dt, all_day=True, category_id="...")
+final_id = update_or_create_event(maybe_legacy_id, topic_id="...", summary="...", start=dt, end=dt)
+```
+
+각 봇 마이그레이션은 점진적으로 진행. `migration/dalwiki_client_v2.py`는 패키지의 origin 템플릿.
+
 ## 문서 구조
 
 | 파일 | 내용 |
