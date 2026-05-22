@@ -228,8 +228,12 @@ def create_event(
     location: Optional[str] = None,
     category_id: Optional[str] = None,
     rrule: Optional[str] = None,
+    color: Optional[str] = None,
 ) -> Optional[str]:
-    """events/create. summary가 100자 넘으면 ...로 자름. 성공 시 event id."""
+    """events/create. summary가 100자 넘으면 ...로 자름. 성공 시 event id.
+
+    color는 OpenAPI 스키마에 없지만 봇 일부가 쓰던 옛 필드라 호환성 위해 전달 가능.
+    """
     if len(summary) > 100:
         summary = summary[:97] + "..."
     body: dict = {
@@ -251,6 +255,8 @@ def create_event(
         body["categoryId"] = category_id
     if rrule:
         body["rrule"] = rrule
+    if color:
+        body["color"] = color
 
     resp = _post("/events/create", body)
     if not resp:
