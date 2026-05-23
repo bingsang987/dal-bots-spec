@@ -25,6 +25,14 @@ from .client import (
     update_event,
     update_or_create_event,
 )
+from .histories import (
+    TombstoneStore,
+    deletion_actor,
+    get_latest_action,
+    list_histories,
+    was_human_deleted,
+    was_human_edited,
+)
 
 __all__ = [
     "API_BASE",
@@ -36,4 +44,11 @@ __all__ = [
     "resolve_topic_by_name",
     "update_event",
     "update_or_create_event",
+    # histories / tombstones
+    "TombstoneStore",
+    "deletion_actor",
+    "get_latest_action",
+    "list_histories",
+    "was_human_deleted",
+    "was_human_edited",
 ]
