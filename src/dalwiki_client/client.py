@@ -331,11 +331,21 @@ def update_or_create_event(
     location: Optional[str] = None,
     category_id: Optional[str] = None,
     rrule: Optional[str] = None,
+    cache: Optional["TopicCache"] = None,
 ) -> Optional[str]:
-    """id 있으면 update 시도, 404면 자동 POST. 없으면 바로 POST.
+    """id 있으면 update 시도, 404면 자동 처리. 없으면 바로 POST.
 
     v1→v2 마이그레이션 후 v1 UUID event_id 잔존 케이스 대응용.
-    Returns: 최종 event_id (POST 시 새 id).
+
+    cache가 주어지면 **2단계 fallback**:
+      1) update_event(event_id) → 200 OK → 반환
+      2) 404 → cache.lookup(summary, start)로 v2 id 찾기
+         발견 시 그 id로 다시 update_event → 200 OK → 반환 (cache도 새 id로 갱신 안 함, 이미 그 id임)
+      3) cache miss or 재시도 실패 → create_event → 새 id 반환 (cache에 추가)
+
+    cache 미주어지면 **1단계 fallback**: 404 → 바로 create_event (중복 위험 있음).
+
+    Returns: 최종 event_id (POST 시 새 id) 또는 None.
     """
     if event_id:
         ok, sc = update_event(
@@ -356,8 +366,30 @@ def update_or_create_event(
             return event_id
         if sc != 404:
             return None
+        # 404 분기
+        if cache is not None:
+            start_iso = _iso_z(start)
+            v2_id = cache.lookup(summary, start_iso)
+            if v2_id and v2_id != event_id:
+                ok2, _ = update_event(
+                    v2_id,
+                    summary=summary,
+                    start=start,
+                    end=end,
+                    all_day=all_day,
+                    start_timezone=start_timezone,
+                    end_timezone=end_timezone,
+                    description=description,
+                    link=link,
+                    location=location,
+                    category_id=category_id,
+                    rrule=rrule,
+                )
+                if ok2:
+                    logger.info(f"id 복구: {event_id} → {v2_id}")
+                    return v2_id
         logger.warning(f"events/update {event_id} → 404, fallback to create")
-    return create_event(
+    new_id = create_event(
         topic_id=topic_id,
         summary=summary,
         start=start,
@@ -371,6 +403,9 @@ def update_or_create_event(
         category_id=category_id,
         rrule=rrule,
     )
+    if new_id and cache is not None:
+        cache.add(summary, _iso_z(start), new_id)
+    return new_id
 
 
 def delete_event(event_id: str) -> bool:
@@ -378,3 +413,70 @@ def delete_event(event_id: str) -> bool:
     if not resp:
         return False
     return resp["status"] in (200, 204)
+
+
+# ── TopicCache: (summary, start) → id 자연 키 캐시 ──────────────────────────
+
+class TopicCache:
+    """토픽 전체 이벤트의 (summary, start) → id 매핑 캐시.
+
+    v1→v2 마이그레이션 후 봇 DB에 잔존하는 옛 UUID event_id가 PATCH 시 404를
+    받으면, 같은 (summary, start)로 dal.wiki에 이미 등록된 v2 id를 찾아 복구
+    한다. 이걸 안 하면 fallback POST가 중복 이벤트를 만든다.
+
+    사용:
+        cache = TopicCache(topic_id)
+        cache.load(days_back=60, days_forward=365)
+        update_or_create_event(old_id, topic_id=..., ..., cache=cache)
+    """
+
+    def __init__(self, topic_id: str):
+        self.topic_id = topic_id
+        self._map: dict[tuple[str, str], str] = {}
+
+    def load(self, days_back: int = 60, days_forward: int = 365,
+             chunk_days: int = 49) -> int:
+        """토픽 이벤트를 시간 윈도우로 청크 분할 fetch 후 (summary, start) → id 맵 구축.
+
+        list_events 자체에 truncation 자동 분할이 있지만, days_back+days_forward가
+        클 때 명시적 청크가 더 효율적이라 자체 청크.
+        """
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(tz=timezone.utc)
+        cur = now - timedelta(days=days_back)
+        end_t = now + timedelta(days=days_forward)
+        m: dict[tuple[str, str], str] = {}
+        while cur < end_t:
+            nxt = min(cur + timedelta(days=chunk_days), end_t)
+            try:
+                evs = list_events(self.topic_id, from_=cur, to=nxt, take=1000)
+                for e in evs:
+                    eid = e.get("id")
+                    summary = (e.get("summary") or "").strip()
+                    start = e.get("start") or ""
+                    if eid and summary and start:
+                        m[(summary, start)] = eid
+            except Exception as ex:
+                logger.warning(f"TopicCache.load {cur.date()}~{nxt.date()} 실패: {ex}")
+            cur = nxt
+        self._map = m
+        logger.info(f"TopicCache[{self.topic_id}] loaded: {len(m)} entries")
+        return len(m)
+
+    def lookup(self, summary: str, start_iso: Optional[str]) -> Optional[str]:
+        """(summary, start) 자연 키로 v2 id 조회. load()되지 않았으면 빈 맵에서 None."""
+        if not start_iso:
+            return None
+        return self._map.get((summary.strip(), start_iso))
+
+    def add(self, summary: str, start_iso: Optional[str], event_id: str) -> None:
+        """POST 직후 호출해서 캐시 갱신. start_iso None이면 무시."""
+        if not start_iso:
+            return
+        self._map[(summary.strip(), start_iso)] = event_id
+
+    def __len__(self) -> int:
+        return len(self._map)
+
+    def __contains__(self, key: tuple[str, str]) -> bool:
+        return key in self._map

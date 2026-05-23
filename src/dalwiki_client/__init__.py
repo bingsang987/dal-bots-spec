@@ -16,6 +16,7 @@
 
 from .client import (
     API_BASE,
+    TopicCache,
     create_event,
     create_topic,
     delete_event,
@@ -27,6 +28,7 @@ from .client import (
 
 __all__ = [
     "API_BASE",
+    "TopicCache",
     "create_event",
     "create_topic",
     "delete_event",
