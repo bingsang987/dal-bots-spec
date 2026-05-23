@@ -415,6 +415,23 @@ def delete_event(event_id: str) -> bool:
     return resp["status"] in (200, 204)
 
 
+def get_event(event_id: str) -> Optional[dict]:
+    """단일 이벤트 전체 조회 (description 포함).
+
+    ⚠️ events/list 는 description 을 응답에 포함하지 않는다. description 까지
+    필요하면 이 함수를 호출해야 한다. 메인 sync 시 description 까지 미러링이
+    필요한 봇은 list_events 로 ID 만 얻은 뒤 이 함수로 보충한다.
+
+    Returns:
+        이벤트 dict (id, summary, start, end, description, ... 포함) 또는 None.
+    """
+    resp = _post("/events/get", {"id": event_id})
+    if not resp or resp.get("status") != 200:
+        return None
+    body = resp.get("body")
+    return body if isinstance(body, dict) else None
+
+
 # ── TopicCache: (summary, start) → id 자연 키 캐시 ──────────────────────────
 
 class TopicCache:
