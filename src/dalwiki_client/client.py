@@ -68,9 +68,15 @@ def _post(path: str, body: dict, retries: int = 3):
             sc = resp.status_code
             if sc in (200, 201, 204):
                 try:
-                    return {"status": sc, "body": resp.json()}
+                    resp_body = resp.json()
                 except Exception:
-                    return {"status": sc, "body": None}
+                    resp_body = None
+                try:
+                    from . import discord_notify
+                    discord_notify.enqueue(path, body, resp_body)
+                except Exception as _e:
+                    logger.debug("discord_notify enqueue failed: %s", _e)
+                return {"status": sc, "body": resp_body}
             if sc == 404:
                 return {"status": 404, "body": None}
             if sc in (429, 502, 503, 504):
