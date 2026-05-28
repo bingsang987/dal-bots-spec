@@ -52,6 +52,7 @@ _worker: Optional[threading.Thread] = None
 _worker_lock = threading.Lock()
 _shutdown = threading.Event()
 _topic_name_cache: dict[str, str] = {}
+_event_topic_cache: dict[str, str] = {}  # eventId → topicId, populated lazily for UPDATE link resolution
 
 
 def is_enabled() -> bool:
@@ -155,14 +156,23 @@ def _to_embed(item: dict) -> dict:
     else:
         title = f"{_EMOJI[action]} {action} {event_id}"
 
+    # CREATE의 경우 (topicId, eventId) 매핑을 캐시에 저장 — 같은 프로세스에서 이 이벤트가
+    # 나중에 UPDATE 받으면 무료 lookup으로 link 부착 가능.
+    if action == "CREATE" and event_id and topic_id:
+        _event_topic_cache[event_id] = topic_id
+
     # 이벤트 deep link: https://dal.wiki/t/{topicId}/e/{eventId}
-    # CREATE는 body+resp_body에 둘 다 있음. UPDATE는 봇이 topicId를 안 보내는 경우가 많아
-    # 토픽 URL만 가능. DELETE는 이미 사라진 이벤트라 링크 부착 안 함.
+    # CREATE는 body+resp_body에 둘 다 있어 곧장 부착. UPDATE는 봇이 보통 partial PATCH로
+    # topicId를 안 보내므로 캐시 → /events/get 순서로 resolve. DELETE는 이미 사라진
+    # 이벤트라 link 부착 안 함 (/events/get도 404 반환).
     event_url = ""
     if action != "DELETE" and event_id:
+        if not topic_id:
+            topic_id = _event_topic_cache.get(event_id) or _resolve_topic_for_event(event_id) or ""
+            if topic_id:
+                _event_topic_cache[event_id] = topic_id
         if topic_id:
             event_url = f"https://dal.wiki/t/{topic_id}/e/{event_id}"
-        # topic_id 없이 event_id만 있는 경우(UPDATE 흔함): 링크 생성 불가 → 패스
 
     fields = []
     if topic_id:
@@ -204,6 +214,35 @@ def _fmt_time(value: str) -> str:
 # Avoid importing zoneinfo just for KST offset
 from datetime import timedelta as _td
 _KST_OFFSET = _td(hours=9)
+
+
+def _resolve_topic_for_event(event_id: str) -> Optional[str]:
+    """eventId → topicId 단발 조회 (/events/get). 결과는 호출자가 _event_topic_cache에 캐싱.
+
+    UPDATE 알림에 deep link 부착하기 위함. 봇이 partial PATCH로 topicId를 안 보내는
+    경우가 많은데, eventId만으로도 토픽을 알 수 있어야 클릭 가능 링크 만든다.
+    실패(404, 네트워크) 시 None — 호출자는 그냥 링크 없이 진행.
+    """
+    if not event_id:
+        return None
+    try:
+        from .client import API_BASE, _get_session
+        url = f"{API_BASE}/events/get"
+        resp = _get_session().post(url, json={"id": event_id}, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json() or {}
+            # 응답 스키마: { ..., "topic": {"id": "...", "name": "..."} }
+            # topicId가 top-level에 없으므로 nested 객체에서 추출.
+            topic = data.get("topic") or {}
+            topic_id = topic.get("id")
+            topic_name = topic.get("name")
+            # 토픽 이름도 함께 캐싱 — 어차피 받았으니 무료.
+            if topic_id and topic_name and topic_id not in _topic_name_cache:
+                _topic_name_cache[topic_id] = topic_name
+            return topic_id or None
+    except Exception as e:
+        logger.debug("event→topic lookup failed for %s: %s", event_id, e)
+    return None
 
 
 def _resolve_topic_name(topic_id: str) -> str:
