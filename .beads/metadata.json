@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "dalbots",
+  "project_id": "5aae509f-19f9-4857-aa22-f59bf2620dea"
+}
