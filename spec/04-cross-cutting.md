@@ -130,3 +130,35 @@ safe_url  = html.escape(url, quote=True)   # URL
 
 - 신규 봇을 추가할 때 대시보드 레이블도 함께 등록해야 한다
 - `dashboard.py`로 현황 조회 가능
+
+---
+
+## ⚠️ 카테고리 이중표시 (`[청약] [청약]`) — 재발 1순위 함정
+
+### 증상
+이벤트가 캘린더에 `[청약] [청약] 스트라드비젼` 처럼 **카테고리 태그가 두 번** 찍힌다.
+
+### 원인 (왜 자꾸 반복되는가)
+1. **레거시 메커니즘의 잔상.** 구 dal.wiki는 `summary` 맨 앞 대괄호를 **자동으로 카테고리로 추출**했다. 그래서 옛 봇들은 의도적으로 `summary = "[카테고리] 제목"` 으로 만들었다.
+2. **마이그레이션 후 의미가 뒤집힘.** API v2 + UI 개편으로 카테고리는 **`categoryId`로 명시 지정**하고, **UI가 그 카테고리명을 `[이름]` 칩으로 자동 prepend**한다. 이제 summary의 대괄호 prefix는 불필요 + 중복.
+3. **재발 메커니즘.** 신규 봇을 짤 때 (a) 옛 봇 코드를 참고/복붙하며 `f"[{label}] {title}"` 패턴이 따라오고, (b) `categoryId`도 올바르게 지정 → **옛 방식 + 새 방식이 동시에 적용**되어 칩이 두 번 뜬다. 한쪽만 틀린 게 아니라 "둘 다 맞게 한" 게 함정.
+
+### 규칙 (확정)
+- **`summary`에는 카테고리 대괄호 prefix를 절대 넣지 않는다.** 순수 콘텐츠(제목·부가정보)만.
+- 카테고리는 **오직 `categoryId`로만** 지정한다 (항상 명시 — `categoryId` 자동추출에 의존 금지).
+- 콘솔/로그에서 카테고리를 보고 싶으면 **로그 문자열에만** `[etype]`을 붙이고, **API에 보내는 `summary`에는 넣지 않는다.**
+
+```python
+# ❌ 금지 — UI 칩과 중복되어 [청약] [청약] 이중표시
+summary = f"[{label}] {corp}"
+create_event(summary=summary, category_id=cat_id)
+
+# ✅ 올바름 — summary는 콘텐츠만, 카테고리는 categoryId로만
+summary = corp                       # 예: "스트라드비젼 (공모 14,000원)"
+create_event(summary=summary, category_id=cat_id)
+```
+
+### 빌드 전 체크 / 탐지
+- 신규 봇 `build_*_summary` 작성 시: **summary 문자열이 `[` 로 시작하면 거의 버그.**
+- 사후 점검: `list_events` 결과의 `summary`가 `[`로 시작하는지 grep. 시작하면 이중표시 의심.
+- 적발 이력: ipobot (2026-06-10) — 메모리에 규칙이 있었으나 코드 작성 시 미적용. 그래서 이 함정을 **스펙 문서(빌드 전 필독)** 에 명시. 관련 메모리: `dalwiki-summary-prefix-deprecated`, `dalwiki-category-ui-behavior`, `feedback_dalwiki_categoryid_explicit`.
