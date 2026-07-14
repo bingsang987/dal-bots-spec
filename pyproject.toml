@@ -9,9 +9,14 @@ description = "Shared dal.wiki API v2 client for the dal.wiki bot ecosystem."
 requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31",
+    "holidays>=0.100",
+    "feedparser>=6.0",
+    "beautifulsoup4>=4.12",
 ]
 
+# ingest = LLM 구조화(비-mock) 시 필요: pip install -e .[ingest]
 [project.optional-dependencies]
+ingest = ["anthropic>=0.40"]
 dev = ["pytest>=7"]
 
 [tool.setuptools.packages.find]
