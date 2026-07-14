@@ -30,7 +30,7 @@ class HtmlListAdapter:
                  title_selector: Optional[str] = None,
                  link_selector: Optional[str] = None,
                  link_base: str = "", tier: str = "auto",
-                 id_attr: str = "href"):
+                 id_attr: str = "href", timeout: int = 20):
         self.name = name
         self.list_url = list_url
         self.row_selector = row_selector
@@ -39,10 +39,11 @@ class HtmlListAdapter:
         self.link_base = link_base
         self.tier = tier
         self.id_attr = id_attr
+        self.timeout = timeout
 
     def poll(self) -> list[RawItem]:
         from bs4 import BeautifulSoup
-        html = fetch_html(self.list_url, tier=self.tier)
+        html = fetch_html(self.list_url, tier=self.tier, timeout=self.timeout)
         if not html:
             return []
         soup = BeautifulSoup(html, "html.parser")
@@ -70,7 +71,7 @@ class HtmlListAdapter:
     def fetch_body(self, item: RawItem, body_selector: Optional[str] = None) -> str:
         """상세 페이지 본문 취득(키워드 매치된 건만 호출 권장)."""
         from bs4 import BeautifulSoup
-        html = fetch_html(item.url, tier=self.tier)
+        html = fetch_html(item.url, tier=self.tier, timeout=self.timeout)
         if not html:
             return ""
         soup = BeautifulSoup(html, "html.parser")
