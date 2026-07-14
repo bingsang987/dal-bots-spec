@@ -203,3 +203,92 @@ def run_cycle(*, token: str, channel_id: str, db_path: Optional[str] = None,
             await client.close()
 
     client.run(token, log_handler=None)
+
+
+def run_forever(*, token: str, channel_id: str, db_path: Optional[str] = None,
+                poll_seconds: int = 90, log=print) -> None:
+    """상시 실행 러너 — PC 켜져 있는 동안 계속 접속.
+    ✅/❌ 반응은 즉시 처리(on_raw_reaction_add), 새 항목은 poll_seconds마다 게시.
+    유휴 시 리소스 거의 0. 연결 끊기면 discord.py가 자동 재접속."""
+    if not token or not channel_id:
+        log("[승인-상시] 토큰/채널 미설정 — 종료")
+        return
+    try:
+        import discord
+        from discord.ext import tasks
+    except Exception:
+        log("[승인-상시] discord.py 없음")
+        return
+
+    chan_id = int(channel_id)
+    client = discord.Client(intents=discord.Intents.default())
+
+    async def _channel():
+        return client.get_channel(chan_id) or await client.fetch_channel(chan_id)
+
+    @tasks.loop(seconds=poll_seconds)
+    async def poster():
+        try:
+            channel = await _channel()
+            conn = _conn(db_path)
+            for r in conn.execute("SELECT * FROM approval_items WHERE status='new'").fetchall():
+                try:
+                    m = await channel.send(embed=_embed(discord, r))
+                    await m.add_reaction(EMOJI_YES)
+                    await m.add_reaction(EMOJI_NO)
+                    conn.execute("UPDATE approval_items SET status='posted', message_id=? WHERE id=?",
+                                 (str(m.id), r["id"]))
+                    conn.commit()
+                    log(f"[승인-상시] 게시: {r['summary'][:40]}")
+                except Exception as e:
+                    log(f"[승인-상시] 게시 실패: {e}")
+            conn.close()
+        except Exception as e:
+            log(f"[승인-상시] poster 오류: {e}")
+
+    @client.event
+    async def on_ready():
+        if not poster.is_running():
+            poster.start()
+        log(f"[승인-상시] 준비 완료: {client.user}")
+
+    @client.event
+    async def on_raw_reaction_add(payload):
+        try:
+            if client.user and payload.user_id == client.user.id:
+                return
+            emoji = str(payload.emoji)
+            if emoji not in (EMOJI_YES, EMOJI_NO):
+                return
+            conn = _conn(db_path)
+            r = conn.execute(
+                "SELECT * FROM approval_items WHERE message_id=? AND status='posted'",
+                (str(payload.message_id),)).fetchone()
+            if not r:
+                conn.close(); return
+            channel = await _channel()
+            try:
+                msg = await channel.fetch_message(payload.message_id)
+            except Exception:
+                msg = None
+            if emoji == EMOJI_YES:
+                ok = _register_approved(r, log)
+                conn.execute("UPDATE approval_items SET status=? WHERE id=?",
+                             ("approved" if ok else "posted", r["id"]))
+                conn.commit()
+                if ok and msg:
+                    try: await msg.edit(content="✅ **승인됨** — dal.wiki 등록 완료")
+                    except Exception: pass
+                log(f"[승인-상시] 승인→등록: {r['summary'][:40]}")
+            else:
+                conn.execute("UPDATE approval_items SET status='rejected' WHERE id=?", (r["id"],))
+                conn.commit()
+                if msg:
+                    try: await msg.edit(content="❌ **미승인** — 폐기")
+                    except Exception: pass
+                log(f"[승인-상시] 미승인: {r['summary'][:40]}")
+            conn.close()
+        except Exception as e:
+            log(f"[승인-상시] 반응처리 오류: {e}")
+
+    client.run(token, log_handler=None)
