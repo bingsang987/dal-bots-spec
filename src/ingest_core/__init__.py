@@ -15,6 +15,7 @@ from .structurer import Structurer
 from .adapters import RSSAdapter, HtmlListAdapter
 from . import discord
 from . import fetch
+from . import approval
 
 __all__ = [
     "RawItem", "StructuredEvent",
