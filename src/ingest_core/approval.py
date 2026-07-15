@@ -34,11 +34,17 @@ CREATE TABLE IF NOT EXISTS approval_items (
     start_iso TEXT, end_iso TEXT, all_day INTEGER DEFAULT 1,
     description TEXT, link TEXT, location TEXT, category_id TEXT,
     confidence REAL, dedup_key TEXT,
+    source_url TEXT,                  -- 판단 근거(원본 트윗/공지/디스코드 메시지)
     status TEXT DEFAULT 'new',        -- new | posted | approved | rejected
     message_id TEXT, created_at TEXT,
     UNIQUE(bot, dedup_key)
 );
 """
+
+# 기존 DB 마이그레이션(컬럼 추가). 이미 있으면 무시.
+_MIGRATIONS = [
+    "ALTER TABLE approval_items ADD COLUMN source_url TEXT",
+]
 
 EMOJI_YES = "✅"
 EMOJI_NO = "❌"
@@ -50,6 +56,12 @@ def _conn(db_path: Optional[str] = None) -> sqlite3.Connection:
     c = sqlite3.connect(str(p))
     c.row_factory = sqlite3.Row
     c.executescript(_SCHEMA)
+    for sql in _MIGRATIONS:          # 기존 DB에 컬럼 보강(있으면 무시)
+        try:
+            c.execute(sql)
+            c.commit()
+        except sqlite3.OperationalError:
+            pass
     return c
 
 
@@ -57,10 +69,11 @@ def enqueue(bot: str, *, topic_id: str, summary: str, start_iso: str,
             end_iso: str, description: str = "", link: str = "",
             location: str = "", category_id: Optional[str] = None,
             all_day: bool = True, confidence: float = 0.0,
-            dedup_key: Optional[str] = None,
+            dedup_key: Optional[str] = None, source_url: str = "",
             db_path: Optional[str] = None) -> bool:
     """애매한 이벤트를 승인 대기 큐에 넣는다. 절대 예외를 던지지 않는다.
 
+    source_url: 판단 근거 원본(트윗/공지/디스코드 메시지). 승인 카드에 링크로 붙는다.
     Returns: 새로 큐에 들어갔으면 True. 이미 있거나 실패면 False.
     """
     try:
@@ -69,11 +82,11 @@ def enqueue(bot: str, *, topic_id: str, summary: str, start_iso: str,
             """INSERT OR IGNORE INTO approval_items
                (bot, topic_id, summary, start_iso, end_iso, all_day,
                 description, link, location, category_id, confidence,
-                dedup_key, status, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'new',?)""",
+                dedup_key, source_url, status, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'new',?)""",
             (bot, topic_id, summary, start_iso, end_iso, int(all_day),
              description, link, location, category_id, confidence,
-             dedup_key or summary, datetime.now(KST).isoformat()))
+             dedup_key or summary, source_url, datetime.now(KST).isoformat()))
         conn.commit()
         ok = cur.rowcount > 0
         conn.close()
@@ -95,16 +108,32 @@ def pending_count(db_path: Optional[str] = None) -> int:
 
 
 # ── 디스코드 승인 러너 ────────────────────────────────────────
+def _row_get(row, key, default=None):
+    """sqlite3.Row 안전 접근(옛 DB에 컬럼 없을 수 있음)."""
+    try:
+        return row[key] if key in row.keys() else default
+    except Exception:
+        return default
+
+
 def _embed(discord, row):
+    src = _row_get(row, "source_url") or ""
+    link = row["link"] or ""
+    # 판단 근거가 최우선 → 제목 클릭이 원본으로 가게
     e = discord.Embed(
-        title=(row["summary"] or "")[:250], url=(row["link"] or None),
+        title=(row["summary"] or "")[:250], url=(src or link or None),
         description="\n".join(x for x in [
             f"**봇** {row['bot']}",
             f"**시작** {(row['start_iso'] or '')[:10] or '-'}",
             f"**마감** {(row['end_iso'] or '')[:10] or '-'}",
+            f"**장소** {row['location']}" if _row_get(row, "location") else "",
             f"**신뢰도** {row['confidence']:.2f}" if row['confidence'] is not None else "",
         ] if x))
-    e.set_footer(text="✅ 승인 → dal.wiki 등록 / ❌ 미승인 → 폐기 (다음 배치 반영)")
+    if src:
+        e.add_field(name="🔎 원본(판단 근거)", value=src, inline=False)
+    if link and link != src:
+        e.add_field(name="🔗 링크", value=link, inline=False)
+    e.set_footer(text="✅ 승인 → dal.wiki 등록 / ❌ 미승인 → 폐기")
     return e
 
 
