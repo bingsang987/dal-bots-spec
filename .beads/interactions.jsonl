@@ -48,3 +48,4 @@
 {"id":"int-4f2e27a2","kind":"field_change","created_at":"2026-10-15T12:52:45.6389432Z","actor":"gaminggamer69","issue_id":"dalbots-bmi.9","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-544ff70f","kind":"field_change","created_at":"2026-10-15T12:54:14.0033911Z","actor":"gaminggamer69","issue_id":"dalbots-bmi.28","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-d8661bd5","kind":"field_change","created_at":"2026-10-15T13:00:22.5771127Z","actor":"gaminggamer69","issue_id":"dalbots-bmi.41","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-bd705287","kind":"field_change","created_at":"2026-10-15T16:34:02.2867908Z","actor":"gaminggamer69","issue_id":"dalbots-bmi.47","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"2026-10-16 festivalbot apply로 소멸 22건 삭제 완료"}}
