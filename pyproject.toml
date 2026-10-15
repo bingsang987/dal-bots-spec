@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dalwiki-client"
-version = "0.2.0"
-description = "Shared dal.wiki API v2 client for the dal.wiki bot ecosystem."
+version = "0.3.0"
+description = "Shared dal.wiki API v2 client + botkit (sync/run/llm/discord) for the dal.wiki bot ecosystem."
 requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31",
@@ -15,9 +15,17 @@ dependencies = [
 ]
 
 # ingest = LLM 구조화(비-mock) 시 필요: pip install -e .[ingest]
+# llm     = botkit.llm (Claude 호출 + 이미지 축소): pip install -e .[llm]
+# discord = botkit.discord catchup:                 pip install -e .[discord]
 [project.optional-dependencies]
 ingest = ["anthropic>=0.40"]
-dev = ["pytest>=7"]
+llm = ["anthropic>=0.40", "Pillow>=10"]
+discord = ["discord.py>=2.3"]
+dev = ["pytest>=7", "anthropic>=0.40", "Pillow>=10", "discord.py>=2.3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

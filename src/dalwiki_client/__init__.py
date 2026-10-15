@@ -16,6 +16,8 @@
 
 from .client import (
     API_BASE,
+    DalWikiError,
+    ListFailed,
     TopicCache,
     create_event,
     create_topic,
@@ -37,6 +39,8 @@ from .histories import (
 
 __all__ = [
     "API_BASE",
+    "DalWikiError",
+    "ListFailed",
     "TopicCache",
     "create_event",
     "create_topic",

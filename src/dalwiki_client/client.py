@@ -4,18 +4,21 @@ dalwiki_client_v2.py (migration template) 기반으로 다음 기능을 추가�
 - list_events: 응답이 take cap을 채우면 시간 윈도우를 절반으로 쪼개 재귀 호출 (truncation 자동 분할)
 - update_event: 404 시 자동 fallback 함수 update_or_create_event 제공
 - categoryIds, tz 같은 신 API 파라미터 노출
-- DRY_RUN 분기, X-Api-Key 자동 첨부
-- summary 100자 자동 클립
+- DRY_RUN 분기(쓰기만 차단, 조회 POST는 실제 호출), X-Api-Key 자동 첨부
+- summary 100자 자동 클립 + 2자 미만 가드, description 2자 미만 omit, location 64자 절단
+- list_events 실패(400/5xx/재시도 소진) 시 ListFailed 예외 — 호출자가 "일부 누락"을 반드시 인지
 
-모든 datetime 입력은 ISO 8601 UTC Z 포맷 (`2026-05-28T03:00:00.000Z`) — KST/+09:00 오프셋
-포맷을 보내면 dal.wiki가 400을 던지므로 호출자가 변환 책임을 진다.
+모든 datetime 입력은 ISO 8601 UTC Z 포맷 (`2026-05-28T03:00:00.000Z`)으로 정규화된다.
+aware datetime / Unix ms / ISO 문자열(Z, +09:00, 밀리초 유무 무관) 모두 `_iso_z`가
+`.000Z`로 맞춘다. KST/+09:00 오프셋 포맷을 그대로 보내면 dal.wiki가 400을 던지므로
+문자열도 반드시 이 함수를 거친다.
 """
 from __future__ import annotations
 
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Iterable, Optional
 
 import requests
@@ -25,14 +28,57 @@ logger = logging.getLogger(__name__)
 API_BASE = os.environ.get("DALWIKI_API_BASE", "https://api.dal.wiki/api-reference")
 API_KEY = os.environ.get("DALWIKI_API_KEY", "")
 TIMEOUT = int(os.environ.get("DALWIKI_TIMEOUT", "20"))
+# import 시점 스냅샷(구 호환). 실제 판정은 _is_dry_run()이 환경변수를 매 호출 다시 읽는다 —
+# botkit.run이 --dry-run 처리로 os.environ["DRY_RUN"]을 import 이후에 세팅하기 때문.
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 
 # events/list take 상한 (dal.wiki API v2)
 MAX_TAKE = 1000
 
+# DRY_RUN 중에도 실제로 호출하는 조회 전용 엔드포인트(pointfarm-cb4).
+# 드라이런에서 가짜 id/빈 목록을 돌려주면 "중복 생성/삭제 없음"을 검증할 수 없다.
+_READ_ONLY_PATHS = frozenset({
+    "/events/list",
+    "/events/get",
+    "/topics/get",
+    "/topics/histories",
+    "/categories/list",
+    "/categories/get",
+    "/legacy/resolveTopicByName",
+})
+
 _session: Optional[requests.Session] = None
 _topic_cache: dict[str, str] = {}
 _dry_run_counter = 0
+
+
+class DalWikiError(Exception):
+    """dal.wiki 클라이언트 공통 예외 베이스."""
+
+
+class ListFailed(DalWikiError):
+    """events/list 가 실패했다(400/5xx/네트워크 재시도 소진).
+
+    예전엔 조용히 `[]`를 돌려줘서 호출자가 "이 범위에 이벤트가 없다"로 오인하고
+    prune/DAY_WIPE/CREATE를 폭주시켰다(dalbots-bmi.12). 이제 기본으로 이 예외를 던진다.
+    `list_events(..., raise_on_fail=False)`로 구 동작을 유지할 수 있다.
+    """
+
+    def __init__(self, topic_id: str, status: Optional[int], from_iso=None, to_iso=None,
+                 detail: str = ""):
+        self.topic_id = topic_id
+        self.status = status
+        self.from_iso = from_iso
+        self.to_iso = to_iso
+        self.detail = detail
+        rng = f" {from_iso}~{to_iso}" if (from_iso or to_iso) else ""
+        st = f"HTTP {status}" if status else "네트워크 재시도 소진"
+        super().__init__(f"events/list 실패 topic={topic_id}{rng}: {st} {detail}".rstrip())
+
+
+def _is_dry_run() -> bool:
+    """DRY_RUN 판정. 모듈 상수(import 시점) 또는 현재 환경변수 둘 중 하나라도 true면 true."""
+    return DRY_RUN or os.environ.get("DRY_RUN", "false").lower() == "true"
 
 
 def _get_session() -> requests.Session:
@@ -40,8 +86,9 @@ def _get_session() -> requests.Session:
     if _session is None:
         _session = requests.Session()
         _session.headers.update({"Content-Type": "application/json"})
-        if API_KEY:
-            _session.headers["X-Api-Key"] = API_KEY
+        key = API_KEY or os.environ.get("DALWIKI_API_KEY", "")
+        if key:
+            _session.headers["X-Api-Key"] = key
     return _session
 
 
@@ -49,11 +96,14 @@ def _post(path: str, body: dict, retries: int = 3):
     """공통 POST. 200/201/204 OK. 429/5xx는 exponential backoff. 404는 응답에 status를
     표시해 호출자가 처리할 수 있게 한다.
 
+    DRY_RUN이면 쓰기 엔드포인트만 가짜 응답(`dry-…` id)을 돌려주고, `_READ_ONLY_PATHS`에
+    속한 조회 엔드포인트는 실제로 호출한다.
+
     Returns:
         ({"status": int, "body": <json|None>}) on completion.
         None if all retries exhausted (network error).
     """
-    if DRY_RUN:
+    if _is_dry_run() and path not in _READ_ONLY_PATHS:
         global _dry_run_counter
         _dry_run_counter += 1
         logger.info(f"[DRY-RUN] POST {path} {body}")
@@ -132,20 +182,98 @@ def create_topic(name: str, description: str, thumbnail: str) -> Optional[str]:
 
 # ── 이벤트 ────────────────────────────────────────────────────────────────
 
+_Z_FMT = "%Y-%m-%dT%H:%M:%S.000Z"
+
+
 def _iso_z(value) -> Optional[str]:
-    """datetime/aware → '...Z', str(이미 ISO) → 그대로, ms int → UTC Z, None → None."""
+    """어떤 입력이든 dal.wiki 서버 포맷 `YYYY-MM-DDTHH:MM:SS.000Z`(UTC, 밀리초 000)로 정규화.
+
+    - aware datetime → UTC 변환
+    - naive datetime → ValueError (tz 모호성은 호출자가 해소)
+    - int/float → Unix ms
+    - str → ISO 8601 파싱 후 재포맷. `Z`, `+09:00`, 밀리초 있음/없음, 날짜만(`YYYY-MM-DD`)
+      모두 허용. tz 정보가 없는 문자열은 UTC로 간주(경고 로그). 파싱 불가 → ValueError.
+      (figurebot/onlinegamebot이 `T00:00:00Z`를 보내 TopicCache 키와 어긋나 404 복구가
+      무력화됐던 사고의 재발 방지.)
+    - None → None
+
+    서브초는 버린다(`.000`) — 서버가 돌려주는 start 와 문자열 비교가 성립해야 한다.
+    """
     if value is None:
         return None
     if isinstance(value, str):
-        return value
+        s = value.strip()
+        if not s:
+            return None
+        if s.endswith(("Z", "z")):
+            s = s[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(s)
+        except ValueError as e:
+            raise ValueError(f"ISO 8601 문자열이 아니다: {value!r}") from e
+        if dt.tzinfo is None:
+            logger.warning(f"_iso_z: tz 없는 문자열 {value!r} → UTC로 간주")
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).strftime(_Z_FMT)
     if isinstance(value, datetime):
         if value.tzinfo is None:
             raise ValueError("dal.wiki API는 naive datetime을 받지 않는다 — tzinfo 명시 필수")
-        return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        return value.astimezone(timezone.utc).strftime(_Z_FMT)
+    if isinstance(value, date):
+        # date → 그날 00:00 UTC. (KST 종일 이벤트는 호출자가 aware datetime으로 넘길 것)
+        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc).strftime(_Z_FMT)
+    if isinstance(value, bool):
+        raise TypeError("bool은 datetime 값이 아니다")
     if isinstance(value, (int, float)):
         dt = datetime.fromtimestamp(value / 1000, tz=timezone.utc)
-        return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        return dt.strftime(_Z_FMT)
     raise TypeError(f"unsupported datetime value: {type(value)}")
+
+
+# ── 필드 가드 (dal.wiki 스키마 제약을 클라이언트에서 일괄 처리) ────────────────
+
+SUMMARY_MAX = 100
+SUMMARY_MIN = 2
+DESCRIPTION_MIN = 2
+LOCATION_MAX = 64
+
+
+def _guard_summary(summary) -> str:
+    """summary: 공백 정리 → 2자 미만이면 보정(빈 값 '(제목 없음)', 1자는 ' (일정)' 덧붙임)
+    → 100자 초과면 '...'로 클립."""
+    s = (summary or "").strip() if isinstance(summary, str) else str(summary or "").strip()
+    if len(s) == 0:
+        logger.warning("summary 가 비어 있어 '(제목 없음)' 으로 대체")
+        s = "(제목 없음)"
+    elif len(s) < SUMMARY_MIN:
+        logger.warning(f"summary {s!r} 가 {SUMMARY_MIN}자 미만 → ' (일정)' 덧붙임")
+        s = f"{s} (일정)"
+    if len(s) > SUMMARY_MAX:
+        s = s[: SUMMARY_MAX - 3] + "..."
+    return s
+
+
+def _guard_description(description) -> Optional[str]:
+    """description: 공백만/2자 미만이면 None(전송 생략)."""
+    if description is None:
+        return None
+    d = str(description)
+    if len(d.strip()) < DESCRIPTION_MIN:
+        return None
+    return d
+
+
+def _guard_location(location) -> Optional[str]:
+    """location: 빈 값 None, 64자 초과면 63자 + '…'."""
+    if location is None:
+        return None
+    loc = str(location).strip()
+    if not loc:
+        return None
+    if len(loc) > LOCATION_MAX:
+        logger.info(f"location {LOCATION_MAX}자 초과 → 절단: {loc[:20]}…")
+        loc = loc[: LOCATION_MAX - 1] + "…"
+    return loc
 
 
 def list_events(
@@ -158,13 +286,21 @@ def list_events(
     tz: Optional[str] = None,
     _depth: int = 0,
     _max_depth: int = 7,
+    raise_on_fail: bool = True,
 ) -> list[dict]:
     """events/list. take cap에 걸리면 시간 윈도우를 절반으로 쪼개 재귀 호출.
 
     Args:
         from_, to: ISO Z 문자열 / datetime / Unix ms 정수 / None
         take: 1~1000 (clamped). 응답이 정확히 take면 truncation으로 간주.
+            ⚠️ from/to 둘 중 하나라도 없으면 truncation 분할이 꺼진다(쪼갤 윈도우가 없음).
         category_ids, per_date_limit, tz: 신 API 신규 파라미터
+        raise_on_fail: True(기본)면 400/5xx/재시도 소진 시 ListFailed 예외.
+            False면 구 동작(빈 리스트 반환 + error 로그) — "없음"과 "실패"를 구분 못 하므로
+            prune/삭제 판단에 쓰는 호출에서는 절대 False로 두지 말 것.
+
+    Raises:
+        ListFailed: raise_on_fail=True 이고 호출이 실패했을 때.
     """
     take = max(1, min(take, MAX_TAKE))
     body: dict = {"topicId": topic_id, "take": take}
@@ -182,7 +318,12 @@ def list_events(
         body["tz"] = tz
 
     resp = _post("/events/list", body)
-    if not resp:
+    if not resp or resp.get("status") not in (200, 201):
+        status = resp.get("status") if resp else None
+        err = ListFailed(topic_id, status, from_iso, to_iso)
+        if raise_on_fail:
+            raise err
+        logger.error(f"{err} (raise_on_fail=False → [] 반환)")
         return []
     raw = resp["body"]
     if isinstance(raw, list):
@@ -210,11 +351,11 @@ def list_events(
             )
             left = list_events(
                 topic_id, from_iso, mid_iso, take, category_ids,
-                per_date_limit, tz, _depth + 1, _max_depth,
+                per_date_limit, tz, _depth + 1, _max_depth, raise_on_fail,
             )
             right = list_events(
                 topic_id, mid_iso, to_iso, take, category_ids,
-                per_date_limit, tz, _depth + 1, _max_depth,
+                per_date_limit, tz, _depth + 1, _max_depth, raise_on_fail,
             )
             seen = {e.get("id"): e for e in left + right if e.get("id")}
             return list(seen.values())
@@ -236,12 +377,16 @@ def create_event(
     rrule: Optional[str] = None,
     color: Optional[str] = None,
 ) -> Optional[str]:
-    """events/create. summary가 100자 넘으면 ...로 자름. 성공 시 event id.
+    """events/create. 성공 시 event id.
+
+    필드 가드(클라이언트 일괄): summary 2자 미만 보정·100자 클립, description 2자 미만
+    생략, location 64자 절단. start/end는 `_iso_z`로 `.000Z` 정규화.
 
     color는 OpenAPI 스키마에 없지만 봇 일부가 쓰던 옛 필드라 호환성 위해 전달 가능.
     """
-    if len(summary) > 100:
-        summary = summary[:97] + "..."
+    summary = _guard_summary(summary)
+    description = _guard_description(description)
+    location = _guard_location(location)
     body: dict = {
         "topicId": topic_id,
         "summary": summary,
@@ -291,9 +436,7 @@ def update_event(
     """
     body: dict = {"id": event_id}
     if summary is not None:
-        if len(summary) > 100:
-            summary = summary[:97] + "..."
-        body["summary"] = summary
+        body["summary"] = _guard_summary(summary)
     if start is not None:
         body["start"] = _iso_z(start)
     if end is not None:
@@ -305,11 +448,16 @@ def update_event(
     if end_timezone is not None:
         body["endTimezone"] = end_timezone
     if description is not None:
-        body["description"] = description
+        # 2자 미만(공백만 등)은 서버 400 → 전송 생략. 비우고 싶으면 호출자가 명시적으로 처리.
+        d = _guard_description(description)
+        if d is not None:
+            body["description"] = d
     if link is not None:
         body["link"] = link
     if location is not None:
-        body["location"] = location
+        loc = _guard_location(location)
+        if loc is not None:
+            body["location"] = loc
     if category_id is not None:
         body["categoryId"] = category_id
     if rrule is not None:
@@ -456,47 +604,113 @@ class TopicCache:
     def __init__(self, topic_id: str):
         self.topic_id = topic_id
         self._map: dict[tuple[str, str], str] = {}
+        self.ids: set[str] = set()            # 윈도우 안에 살아있는 모든 event id
+        self.events: dict[str, dict] = {}     # id → events/list 원본 dict
+        self.complete: bool = False           # 마지막 load가 청크 누락 없이 끝났는가
+        self.failed_chunks: list[tuple[str, str]] = []
+        self.window: Optional[tuple[datetime, datetime]] = None
 
     def load(self, days_back: int = 60, days_forward: int = 365,
-             chunk_days: int = 49) -> int:
+             chunk_days: int = 49, strict: bool = True) -> int:
         """토픽 이벤트를 시간 윈도우로 청크 분할 fetch 후 (summary, start) → id 맵 구축.
 
         list_events 자체에 truncation 자동 분할이 있지만, days_back+days_forward가
         클 때 명시적 청크가 더 효율적이라 자체 청크.
+
+        Args:
+            strict: True(기본)면 청크 하나라도 ListFailed 면 그대로 재던진다 — 캐시가
+                불완전한 채로 404 복구/absent 판정을 하면 중복 생성·오삭제가 난다.
+                False면 구 동작(경고 로그 후 계속, `self.complete=False`, `failed_chunks` 기록).
+
+        Raises:
+            ListFailed: strict=True 이고 어느 청크든 조회가 실패했을 때.
         """
-        from datetime import datetime, timedelta, timezone
+        from datetime import timedelta
         now = datetime.now(tz=timezone.utc)
         cur = now - timedelta(days=days_back)
         end_t = now + timedelta(days=days_forward)
+        self.window = (cur, end_t)
         m: dict[tuple[str, str], str] = {}
+        ids: set[str] = set()
+        events: dict[str, dict] = {}
+        failed: list[tuple[str, str]] = []
         while cur < end_t:
             nxt = min(cur + timedelta(days=chunk_days), end_t)
             try:
                 evs = list_events(self.topic_id, from_=cur, to=nxt, take=1000)
-                for e in evs:
-                    eid = e.get("id")
-                    summary = (e.get("summary") or "").strip()
-                    start = e.get("start") or ""
-                    if eid and summary and start:
-                        m[(summary, start)] = eid
-            except Exception as ex:
-                logger.warning(f"TopicCache.load {cur.date()}~{nxt.date()} 실패: {ex}")
+            except ListFailed as ex:
+                if strict:
+                    logger.error(f"TopicCache.load {cur.date()}~{nxt.date()} 실패 → 중단: {ex}")
+                    raise
+                logger.warning(f"TopicCache.load {cur.date()}~{nxt.date()} 실패(비엄격): {ex}")
+                failed.append((_iso_z(cur), _iso_z(nxt)))
+                evs = []
+            for e in evs:
+                eid = e.get("id")
+                if not eid:
+                    continue
+                ids.add(eid)
+                events[eid] = e
+                summary = (e.get("summary") or "").strip()
+                start = e.get("start") or ""
+                if summary and start:
+                    m[(summary, start)] = eid
             cur = nxt
         self._map = m
-        logger.info(f"TopicCache[{self.topic_id}] loaded: {len(m)} entries")
+        self.ids = ids
+        self.events = events
+        self.failed_chunks = failed
+        self.complete = not failed
+        logger.info(
+            f"TopicCache[{self.topic_id}] loaded: {len(m)} entries"
+            + (f", {len(failed)} chunk(s) FAILED" if failed else "")
+        )
         return len(m)
 
     def lookup(self, summary: str, start_iso: Optional[str]) -> Optional[str]:
-        """(summary, start) 자연 키로 v2 id 조회. load()되지 않았으면 빈 맵에서 None."""
+        """(summary, start) 자연 키로 v2 id 조회. load()되지 않았으면 빈 맵에서 None.
+        start_iso는 `_iso_z`로 정규화해 비교한다."""
         if not start_iso:
             return None
-        return self._map.get((summary.strip(), start_iso))
+        try:
+            start_iso = _iso_z(start_iso)
+        except (ValueError, TypeError):
+            pass
+        return self._map.get((_guard_summary(summary), start_iso))
+
+    def has_id(self, event_id: str) -> bool:
+        """마지막 load 윈도우 안에서 그 id가 살아있었는가."""
+        return event_id in self.ids
+
+    def in_window(self, start) -> bool:
+        """start 가 마지막 load 윈도우 안인가(윈도우 밖은 '없다'고 단정할 수 없다)."""
+        if self.window is None:
+            return False
+        iso = _iso_z(start)
+        if not iso:
+            return False
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return self.window[0] <= dt < self.window[1]
 
     def add(self, summary: str, start_iso: Optional[str], event_id: str) -> None:
         """POST 직후 호출해서 캐시 갱신. start_iso None이면 무시."""
         if not start_iso:
             return
-        self._map[(summary.strip(), start_iso)] = event_id
+        try:
+            start_iso = _iso_z(start_iso)
+        except (ValueError, TypeError):
+            pass
+        self._map[(_guard_summary(summary), start_iso)] = event_id
+        self.ids.add(event_id)
+
+    def discard(self, event_id: str) -> None:
+        """DELETE 직후 호출해서 캐시에서 제거."""
+        self.ids.discard(event_id)
+        ev = self.events.pop(event_id, None)
+        if ev:
+            key = ((ev.get("summary") or "").strip(), ev.get("start") or "")
+            if self._map.get(key) == event_id:
+                self._map.pop(key, None)
 
     def __len__(self) -> int:
         return len(self._map)
