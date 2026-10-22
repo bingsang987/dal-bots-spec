@@ -13,6 +13,8 @@
        NEW       state 에 없음 → (같은 summary+start 가 토픽에 이미 있으면 그 id 를 입양해 update)
                  → 없으면 create
        CHANGED   content_hash 다름 → update. 404 면 캐시에서 (summary,start) 로 복구 → 그래도 없으면 create
+     adopt_scope="category" 면 입양·404 복구 후보를 Event.category_id 가 같은 이벤트로 좁히고, 다른 key 가
+     이미 쥔 id 는 건너뛴다(공유 토픽에서 카테고리마다 같은 (summary,start) 가 있을 때 남의 것을 덮지 않게).
        UNCHANGED hash 같음 → skip
   3. **쓰기 성공 후에만 state 저장**(건별 커밋). 실패하면 state 그대로 → 다음 run 재시도.
   4. 소스에서 사라진 key(absent): 정책 keep | delete(기본). 단
@@ -43,6 +45,7 @@ logger = logging.getLogger("botkit.sync")
 
 AbsentPolicy = Literal["keep", "delete"]
 MissingPolicy = Literal["ignore", "recreate", "forget"]
+AdoptScope = Literal["topic", "category"]
 
 
 class SyncAborted(Exception):
@@ -312,6 +315,8 @@ class SyncEngine:
         dry_run: Optional[bool] = None,
         state: Optional[SyncState] = None,
         log: Optional[logging.Logger] = None,
+        adopt_scope: AdoptScope = "topic",
+        cache: Optional[TopicCache] = None,
     ):
         """
         Args:
@@ -323,11 +328,18 @@ class SyncEngine:
             cache_days_back/forward/chunk_days: TopicCache 윈도우. 윈도우 밖 이벤트는 missing 판정 안 함.
             protect_human_edits: True 면 PATCH 전 histories 로 사람 UPDATE 유무 확인(호출 비용 有).
             dry_run: None 이면 dalwiki_client 의 DRY_RUN 판정을 따른다.
+            adopt_scope: NEW 입양·404 복구 후보 범위. "topic"(기본, 토픽 전체 (summary,start)) |
+                "category"(Event.category_id 가 같은 것만 + 다른 key 가 쥔 id 제외). 한 토픽에 여러
+                카테고리 엔진을 돌리거나 카테고리마다 같은 제목·시각 이벤트가 흔하면 "category".
+            cache: 미리 strict 로드한 TopicCache. 주면 sync() 에서 다시 로드하지 않고 그걸 쓴다(같은 토픽
+                엔진 여러 개가 캐시 하나 공유). 로드 실패 처리는 호출자 몫. None 이면 매 sync() 마다 로드.
         """
         if absent not in ("keep", "delete"):
             raise ValueError(f"absent 정책은 keep|delete: {absent!r}")
         if on_missing not in ("ignore", "recreate", "forget"):
             raise ValueError(f"on_missing 정책은 ignore|recreate|forget: {on_missing!r}")
+        if adopt_scope not in ("topic", "category"):
+            raise ValueError(f"adopt_scope 는 topic|category: {adopt_scope!r}")
         self.topic_id = topic_id
         self.absent = absent
         self.on_missing = on_missing
@@ -335,10 +347,13 @@ class SyncEngine:
         self.cache_days_forward = cache_days_forward
         self.cache_chunk_days = cache_chunk_days
         self.protect_human_edits = protect_human_edits
+        self.adopt_scope = adopt_scope
         self._dry_run = dry_run
         self.state = state or SyncState(state_path, topic_id)
         self.log = log or logger
+        self._shared_cache = cache
         self.cache: Optional[TopicCache] = None
+        self._claimed: set[str] = set()   # 이번 run 에 어떤 key 가 쥔 event id (category 입양 제외용)
 
     # -- helpers ---------------------------------------------------------
     @property
@@ -346,6 +361,9 @@ class SyncEngine:
         return dw._is_dry_run() if self._dry_run is None else self._dry_run
 
     def _load_cache(self) -> TopicCache:
+        if self._shared_cache is not None:
+            self.cache = self._shared_cache
+            return self.cache
         cache = TopicCache(self.topic_id)
         try:
             cache.load(
@@ -359,7 +377,17 @@ class SyncEngine:
         self.cache = cache
         return cache
 
+    def _lookup(self, ev: Event) -> Optional[str]:
+        """입양·404 복구 후보 id. adopt_scope 에 따라 토픽 전체 / 같은 카테고리(+미점유)."""
+        if self.cache is None:
+            return None
+        summary, start = dw._guard_summary(ev.summary), ev.start_iso()
+        if self.adopt_scope == "category":
+            return self.cache.lookup(summary, start, category_id=ev.category_id, exclude=self._claimed)
+        return self.cache.lookup(summary, start)
+
     def _save(self, ev: Event, event_id: str, h: str) -> None:
+        self._claimed.add(event_id)
         if self.dry_run:
             return
         self.state.put(ev.key, event_id, h, dw._guard_summary(ev.summary), ev.start_iso())
@@ -387,7 +415,7 @@ class SyncEngine:
             return None
         self._save(ev, new_id, h)
         if self.cache is not None:
-            self.cache.add(dw._guard_summary(ev.summary), ev.start_iso(), new_id)
+            self.cache.add(dw._guard_summary(ev.summary), ev.start_iso(), new_id, ev.category_id)
         setattr(stats, counter, getattr(stats, counter) + 1)
         self.log.info(f"CREATE {ev.key} {ev.summary!r} → {new_id}")
         return new_id
@@ -408,7 +436,7 @@ class SyncEngine:
             self._fail(stats, f"update 실패 key={ev.key} id={event_id} status={sc}")
             return False
         # 404 → 캐시 복구
-        alt = self.cache.lookup(dw._guard_summary(ev.summary), ev.start_iso()) if self.cache else None
+        alt = self._lookup(ev)
         if alt and alt != event_id:
             ok2, sc2 = dw.update_event(alt, **ev.write_kwargs())
             if ok2:
@@ -470,6 +498,7 @@ class SyncEngine:
 
         cache = self._load_cache()
         existing = self.state.all()
+        self._claimed = {r.event_id for r in existing.values()}
         unchanged_keys: list[str] = []
 
         for ev in events:
@@ -478,7 +507,7 @@ class SyncEngine:
             try:
                 if row is None:
                     # NEW — 토픽에 같은 (summary, start) 가 이미 있으면 입양(중복 생성 방지, state 이관 케이스)
-                    adopt = cache.lookup(dw._guard_summary(ev.summary), ev.start_iso())
+                    adopt = self._lookup(ev)
                     if adopt:
                         self.log.info(f"ADOPT {ev.key} ← 기존 이벤트 {adopt}")
                         self._update(ev, adopt, stats, h, counter="adopted")

@@ -588,6 +588,9 @@ def get_event(event_id: str) -> Optional[dict]:
 
 # ── TopicCache: (summary, start) → id 자연 키 캐시 ──────────────────────────
 
+_ANY = object()   # TopicCache.lookup: category_id 미지정(구 동작) 표식
+
+
 class TopicCache:
     """토픽 전체 이벤트의 (summary, start) → id 매핑 캐시.
 
@@ -599,11 +602,16 @@ class TopicCache:
         cache = TopicCache(topic_id)
         cache.load(days_back=60, days_forward=365)
         update_or_create_event(old_id, topic_id=..., ..., cache=cache)
+
+    같은 (summary, start) 가 여러 건이면(공유 토픽의 카테고리별 '휴방' 등) `_map` 은 마지막 것만
+    가리키지만 `_multi` 엔 전부 남는다. `lookup(..., category_id=X)` 는 그중 카테고리 X 인 것만 본다.
     """
 
     def __init__(self, topic_id: str):
         self.topic_id = topic_id
         self._map: dict[tuple[str, str], str] = {}
+        self._multi: dict[tuple[str, str], list[str]] = {}   # 같은 키의 모든 id(로드 순)
+        self._cat: dict[str, Optional[str]] = {}               # id → categoryId
         self.ids: set[str] = set()            # 윈도우 안에 살아있는 모든 event id
         self.events: dict[str, dict] = {}     # id → events/list 원본 dict
         self.complete: bool = False           # 마지막 load가 청크 누락 없이 끝났는가
@@ -631,6 +639,8 @@ class TopicCache:
         end_t = now + timedelta(days=days_forward)
         self.window = (cur, end_t)
         m: dict[tuple[str, str], str] = {}
+        multi: dict[tuple[str, str], list[str]] = {}
+        cats: dict[str, Optional[str]] = {}
         ids: set[str] = set()
         events: dict[str, dict] = {}
         failed: list[tuple[str, str]] = []
@@ -651,12 +661,18 @@ class TopicCache:
                     continue
                 ids.add(eid)
                 events[eid] = e
+                cats[eid] = e.get("categoryId") or None
                 summary = (e.get("summary") or "").strip()
                 start = e.get("start") or ""
                 if summary and start:
                     m[(summary, start)] = eid
+                    lst = multi.setdefault((summary, start), [])
+                    if eid not in lst:
+                        lst.append(eid)
             cur = nxt
         self._map = m
+        self._multi = multi
+        self._cat = cats
         self.ids = ids
         self.events = events
         self.failed_chunks = failed
@@ -667,16 +683,47 @@ class TopicCache:
         )
         return len(m)
 
-    def lookup(self, summary: str, start_iso: Optional[str]) -> Optional[str]:
-        """(summary, start) 자연 키로 v2 id 조회. load()되지 않았으면 빈 맵에서 None.
-        start_iso는 `_iso_z`로 정규화해 비교한다."""
+    @staticmethod
+    def _key(summary: str, start_iso) -> Optional[tuple[str, str]]:
         if not start_iso:
             return None
         try:
             start_iso = _iso_z(start_iso)
         except (ValueError, TypeError):
             pass
-        return self._map.get((_guard_summary(summary), start_iso))
+        return (_guard_summary(summary), start_iso)
+
+    def lookup(self, summary: str, start_iso: Optional[str], *,
+               category_id=_ANY, exclude: Optional[Iterable[str]] = None) -> Optional[str]:
+        """(summary, start) 자연 키로 v2 id 조회. load()되지 않았으면 빈 맵에서 None.
+        start_iso는 `_iso_z`로 정규화해 비교한다.
+
+        category_id/exclude 를 안 주면 구 동작(같은 키 중 마지막 것). category_id 를 주면(None 포함 —
+        카테고리 없는 이벤트) 그 카테고리 후보 중 exclude 에 없는 첫 id."""
+        key = self._key(summary, start_iso)
+        if key is None:
+            return None
+        if category_id is _ANY and exclude is None:
+            return self._map.get(key)
+        for eid in self.lookup_all(summary, start_iso, category_id=category_id, exclude=exclude):
+            return eid
+        return None
+
+    def lookup_all(self, summary: str, start_iso: Optional[str], *,
+                   category_id=_ANY, exclude: Optional[Iterable[str]] = None) -> list[str]:
+        """같은 (summary, start) 의 모든 id(로드 순). category_id/exclude 로 좁힌다."""
+        key = self._key(summary, start_iso)
+        if key is None:
+            return []
+        ex = set(exclude or ())
+        want = category_id or None
+        return [
+            eid for eid in self._multi.get(key, [])
+            if eid not in ex and (category_id is _ANY or (self._cat.get(eid) or None) == want)
+        ]
+
+    def category_of(self, event_id: str) -> Optional[str]:
+        return self._cat.get(event_id)
 
     def has_id(self, event_id: str) -> bool:
         """마지막 load 윈도우 안에서 그 id가 살아있었는가."""
@@ -692,25 +739,34 @@ class TopicCache:
         dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
         return self.window[0] <= dt < self.window[1]
 
-    def add(self, summary: str, start_iso: Optional[str], event_id: str) -> None:
+    def add(self, summary: str, start_iso: Optional[str], event_id: str,
+            category_id: Optional[str] = None) -> None:
         """POST 직후 호출해서 캐시 갱신. start_iso None이면 무시."""
-        if not start_iso:
+        key = self._key(summary, start_iso)
+        if key is None:
             return
-        try:
-            start_iso = _iso_z(start_iso)
-        except (ValueError, TypeError):
-            pass
-        self._map[(_guard_summary(summary), start_iso)] = event_id
+        self._map[key] = event_id
+        lst = self._multi.setdefault(key, [])
+        if event_id not in lst:
+            lst.append(event_id)
+        self._cat[event_id] = category_id or None
         self.ids.add(event_id)
 
     def discard(self, event_id: str) -> None:
         """DELETE 직후 호출해서 캐시에서 제거."""
         self.ids.discard(event_id)
-        ev = self.events.pop(event_id, None)
-        if ev:
-            key = ((ev.get("summary") or "").strip(), ev.get("start") or "")
-            if self._map.get(key) == event_id:
-                self._map.pop(key, None)
+        self.events.pop(event_id, None)
+        self._cat.pop(event_id, None)
+        for key, lst in list(self._multi.items()):
+            if event_id in lst:
+                lst.remove(event_id)
+                if not lst:
+                    del self._multi[key]
+                if self._map.get(key) == event_id:
+                    if lst:
+                        self._map[key] = lst[-1]
+                    else:
+                        self._map.pop(key, None)
 
     def __len__(self) -> int:
         return len(self._map)

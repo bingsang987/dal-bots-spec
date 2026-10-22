@@ -194,3 +194,106 @@ def test_state_import_legacy_and_forget_before(tmp_path, soon):
     s.put("c", "id-c", "h", "C", (soon - timedelta(days=400)).strftime("%Y-%m-%dT%H:%M:%S.000Z"))
     assert s.forget_before(soon - timedelta(days=100)) == 1
     assert s.get("c") is None and s.get("a") is not None
+
+
+# ---------------------------------------------------------------------------
+# adopt_scope="category" — 공유 토픽에서 카테고리마다 같은 (summary,start) (dalbots-bay)
+# ---------------------------------------------------------------------------
+def cat_engine(tmp_path, name="c.db", **kw):
+    return SyncEngine(TOPIC, tmp_path / name, dry_run=False, cache_days_back=5, cache_days_forward=30,
+                      adopt_scope="category", **kw)
+
+
+def test_default_topic_scope_still_adopts_last_same_key(engine, fake_dal, soon):
+    # 구 동작 고정: 카테고리 무시, 같은 키 중 마지막 것
+    fake_dal.add_event(TOPIC, "휴방", soon, categoryId="B")
+    a = fake_dal.add_event(TOPIC, "휴방", soon, categoryId="A")
+    st = engine.sync([mk("k", "휴방", soon, category_id="B")])
+    assert st.adopted == 1 and engine.state.get("k").event_id == a
+
+
+def test_category_scope_adopts_only_same_category(tmp_path, fake_dal, soon):
+    b = fake_dal.add_event(TOPIC, "휴방", soon, categoryId="B")
+    a = fake_dal.add_event(TOPIC, "휴방", soon, categoryId="A")
+    eng = cat_engine(tmp_path)
+    st = eng.sync([mk("k", "휴방", soon, category_id="B")])
+    assert (st.adopted, st.created) == (1, 0)
+    assert eng.state.get("k").event_id == b
+    assert fake_dal.events[a]["categoryId"] == "A"          # A 미러는 그대로
+    assert [p["id"] for p in fake_dal.paths("/events/update")] == [b]
+
+
+def test_category_scope_no_same_category_candidate_creates(tmp_path, fake_dal, soon):
+    a = fake_dal.add_event(TOPIC, "휴방", soon, categoryId="A")
+    eng = cat_engine(tmp_path)
+    st = eng.sync([mk("k", "휴방", soon, category_id="B")])
+    assert (st.adopted, st.created) == (0, 1)
+    assert fake_dal.events[a]["categoryId"] == "A"
+    assert fake_dal.paths("/events/update") == []
+
+
+def test_category_scope_404_recovery_picks_same_category(tmp_path, fake_dal, soon):
+    b = fake_dal.add_event(TOPIC, "휴방", soon, categoryId="B")
+    a = fake_dal.add_event(TOPIC, "휴방", soon, categoryId="A")
+    eng = cat_engine(tmp_path)
+    eng.state.import_legacy([("k", "old-uuid")])
+    st = eng.sync([mk("k", "휴방", soon, category_id="B", description="본문")])
+    assert (st.recovered, st.created) == (1, 0)
+    assert eng.state.get("k").event_id == b
+    assert fake_dal.events[a]["categoryId"] == "A" and "description" not in fake_dal.events[a]
+
+
+def test_category_scope_404_recovery_skips_other_categories_then_creates(tmp_path, fake_dal, soon):
+    a = fake_dal.add_event(TOPIC, "휴방", soon, categoryId="A")
+    eng = cat_engine(tmp_path)
+    eng.state.import_legacy([("k", "old-uuid")])
+    st = eng.sync([mk("k", "휴방", soon, category_id="B")])
+    assert (st.recovered, st.created) == (0, 1)
+    assert fake_dal.events[a]["categoryId"] == "A"
+
+
+def test_category_scope_does_not_double_claim_within_category(tmp_path, fake_dal, soon):
+    # 같은 카테고리에 같은 (summary,start) 가 2건, 소스 key 도 2개 → 각자 다른 id 를 입양
+    x = fake_dal.add_event(TOPIC, "휴방", soon, categoryId="B")
+    y = fake_dal.add_event(TOPIC, "휴방", soon, categoryId="B")
+    eng = cat_engine(tmp_path)
+    st = eng.sync([mk("k1", "휴방", soon, category_id="B"), mk("k2", "휴방", soon, category_id="B")])
+    assert (st.adopted, st.created) == (2, 0)
+    assert {eng.state.get("k1").event_id, eng.state.get("k2").event_id} == {x, y}
+
+
+def test_category_engines_share_preloaded_cache(tmp_path, fake_dal, soon):
+    from dalwiki_client import TopicCache
+    a = fake_dal.add_event(TOPIC, "휴방", soon, categoryId="A")
+    b = fake_dal.add_event(TOPIC, "휴방", soon, categoryId="B")
+    cache = TopicCache(TOPIC)
+    cache.load(days_back=5, days_forward=30, strict=True)
+    n_list = len(fake_dal.paths("/events/list"))
+    ea = cat_engine(tmp_path, cache=cache, state=SyncState(tmp_path / "s.db", f"{TOPIC}/A"))
+    eb = cat_engine(tmp_path, cache=cache, state=SyncState(tmp_path / "s.db", f"{TOPIC}/B"))
+    sa = ea.sync([mk("ka", "휴방", soon, category_id="A")])
+    sb = eb.sync([mk("kb", "휴방", soon, category_id="B"), mk("kb2", "새 방송", soon, category_id="B")])
+    assert (sa.adopted, sb.adopted, sb.created) == (1, 1, 1)
+    assert ea.state.get("ka").event_id == a and eb.state.get("kb").event_id == b
+    assert len(fake_dal.paths("/events/list")) == n_list           # 재로드 없음
+    assert cache.lookup("새 방송", soon, category_id="B") == eb.state.get("kb2").event_id
+
+
+def test_topic_cache_keeps_all_ids_per_key(fake_dal, soon):
+    from dalwiki_client import TopicCache
+    a = fake_dal.add_event(TOPIC, "휴방", soon, categoryId="A")
+    b = fake_dal.add_event(TOPIC, "휴방", soon, categoryId="B")
+    n = fake_dal.add_event(TOPIC, "휴방", soon)
+    c = TopicCache(TOPIC)
+    c.load(days_back=5, days_forward=30)
+    assert c.lookup("휴방", soon) == n                              # 구 동작: 마지막
+    assert c.lookup_all("휴방", soon) == [a, b, n]
+    assert c.lookup("휴방", soon, category_id="A") == a
+    assert c.lookup("휴방", soon, category_id=None) == n            # 카테고리 없는 것
+    assert c.lookup("휴방", soon, category_id="A", exclude={a}) is None
+    assert c.lookup("휴방", soon, exclude={n}) == a
+    c.discard(n)
+    assert c.lookup("휴방", soon) == b                              # 남은 후보로 폴백
+    c.discard(a)
+    c.discard(b)
+    assert c.lookup("휴방", soon) is None and len(c) == 0
