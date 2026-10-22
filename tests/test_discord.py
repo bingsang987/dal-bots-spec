@@ -160,3 +160,69 @@ def test_sync_handler_supported(store):
     seen = []
     run(catchup(Client([ch]), [1], cur, lambda m: seen.append(m.id), retry_queue=rq, delay=0))
     assert seen == [11]
+
+
+# ---------------------------------------------------------------------------
+# W8-0 .67 — run_catchup_once: on_ready 미도달 시 타임아웃
+# ---------------------------------------------------------------------------
+class _FakeGatewayClient:
+    """discord.Client 대역. ready=False 면 start() 가 close() 까지 on_ready 없이 블록."""
+    give_ready = False
+
+    def __init__(self, intents=None):
+        self._closed = None
+        self.handlers = {}
+
+    def event(self, fn):
+        self.handlers[fn.__name__] = fn
+        return fn
+
+    async def __aenter__(self):
+        self._closed = asyncio.Event()
+        return self
+
+    async def __aexit__(self, *a):
+        await self.close()
+
+    async def start(self, token):
+        if self.give_ready:
+            await self.handlers["on_ready"]()
+        await self._closed.wait()
+
+    async def close(self):
+        self._closed.set()
+
+    def get_channel(self, cid):
+        return None
+
+
+def test_run_catchup_once_ready_timeout_keeps_cursor(store, monkeypatch, capsys):
+    import discord
+    from botkit.discord import run_catchup_once
+    cur, rq = store
+    cur.set(1, 10)
+    monkeypatch.setattr(discord, "Client", _FakeGatewayClient)
+    seen = []
+    st = run_catchup_once("tok", [1], cur, seen.append, retry_queue=rq, ready_timeout=0.2, delay=0)
+    assert st.timed_out and "READY_TIMEOUT" in st.summary()
+    assert seen == [] and cur.get(1) == 10
+    assert "[HEALTH-ALERT]" in capsys.readouterr().out
+
+
+def test_run_catchup_once_normal_path_still_works(store, monkeypatch):
+    import discord
+    from botkit.discord import run_catchup_once
+    cur, rq = store
+    cur.set(1, 10)
+    ch = Channel(1, [Msg(11, "a")])
+
+    class C(_FakeGatewayClient):
+        give_ready = True
+
+        def get_channel(self, cid):
+            return ch
+
+    monkeypatch.setattr(discord, "Client", C)
+    seen = []
+    st = run_catchup_once("tok", [1], cur, lambda m: seen.append(m.id), retry_queue=rq, delay=0)
+    assert not st.timed_out and seen == [11] and cur.get(1) == 11

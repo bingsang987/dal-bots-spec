@@ -155,6 +155,7 @@ class CatchupStats:
     dropped: int = 0          # max_attempts 초과 폐기
     first_run_channels: int = 0
     llm_unavailable: bool = False
+    timed_out: bool = False   # run_catchup_once: on_ready 미도달(ready_timeout) → catchup 생략, 커서 유지
     stopped_at: Optional[tuple[str, str]] = None   # (channel_id, message_id) LLM 불가로 멈춘 자리
     errors: list[str] = field(default_factory=list)
 
@@ -165,6 +166,8 @@ class CatchupStats:
             s += f" first_run={self.first_run_channels}"
         if self.llm_unavailable:
             s += f" LLM_UNAVAILABLE stopped_at={self.stopped_at}"
+        if self.timed_out:
+            s += " READY_TIMEOUT"
         return s
 
 
@@ -320,11 +323,15 @@ def run_catchup_once(
     *,
     retry_queue: Optional[RetryQueue] = None,
     intents=None,
+    ready_timeout: Optional[float] = 300,
     **catchup_kwargs,
 ) -> CatchupStats:
     """discord.Client 를 띄워 on_ready 에서 catchup 1회 → 반드시 close → 통계 반환(블로킹).
 
     on_message 는 등록하지 않는다(catchup 모드에선 커서 기반 처리가 유일한 경로).
+    ready_timeout 초(기본 300, None 이면 무한) 안에 on_ready 가 안 오면 close + alert +
+    `CatchupStats.timed_out=True` 로 돌아온다 — 커서·큐는 그대로(다음 run 이 같은 자리부터). 게이트웨이가
+    on_ready 를 안 줘서 티어 전체가 멈추는 일을 막는다(.67).
     """
     import discord
 
@@ -334,9 +341,13 @@ def run_catchup_once(
     client = discord.Client(intents=intents)
     result: dict[str, Any] = {}
     channel_ids = list(channel_ids)
+    ready = asyncio.Event()
 
     @client.event
     async def on_ready():
+        if ready.is_set() or result.get("timed_out"):
+            return            # 재연결 시 on_ready 재호출 / 타임아웃 뒤 늦게 온 ready → 무시
+        ready.set()
         try:
             result["stats"] = await catchup(
                 client, channel_ids, cursors, handler, retry_queue=retry_queue, **catchup_kwargs
@@ -347,7 +358,25 @@ def run_catchup_once(
         finally:
             await client.close()
 
-    client.run(token, log_handler=None)
+    async def runner():
+        async with client:
+            start = asyncio.ensure_future(client.start(token))
+            waiter = asyncio.ensure_future(ready.wait())
+            done, _ = await asyncio.wait({start, waiter}, timeout=ready_timeout,
+                                         return_when=asyncio.FIRST_COMPLETED)
+            if not done:
+                result["timed_out"] = True
+                await client.close()
+            waiter.cancel()
+            try:
+                await start
+            except asyncio.CancelledError:
+                pass
+
+    asyncio.run(runner())
+    if result.get("timed_out"):
+        alert(f"discord on_ready {ready_timeout}s 미도달 → close, catchup 생략(커서 유지)")
+        return CatchupStats(timed_out=True)
     if "error" in result:
         raise result["error"]
     return result.get("stats", CatchupStats())
