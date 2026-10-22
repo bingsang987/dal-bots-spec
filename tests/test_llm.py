@@ -175,7 +175,7 @@ def test_llm_json_thinking_only_max_tokens_raises_with_reason(caplog):
     cl = FakeClient([resp])
     with caplog.at_level("WARNING", logger="botkit.llm"):
         with pytest.raises(LLMParseError) as ei:
-            llm_json("q", model=HAIKU, max_tokens=120, client=cl)
+            llm_json("q", model=HAIKU, max_tokens=120, client=cl, truncation_retry_max_tokens=None)
     msg = str(ei.value)
     assert "max_tokens" in msg and "thinking" in msg and "1024" in msg
     assert ei.value.stop_reason == "max_tokens"
@@ -187,8 +187,82 @@ def test_llm_json_truncated_json_mentions_max_tokens():
     resp = _FullResp([_TBlock("thinking", thinking=""), _TBlock("text", text='{"a": [1, 2')],
                      stop_reason="max_tokens")
     with pytest.raises(LLMParseError) as ei:
-        llm_json("q", model=HAIKU, client=FakeClient([resp]))
+        llm_json("q", model=HAIKU, client=FakeClient([resp]), truncation_retry_max_tokens=None)
     assert "stop_reason=max_tokens" in str(ei.value)
+
+
+# ── .214 잘림 재시도 / effort / thinking 끄기 ────────────────────────────
+def _thinking_only():
+    return _FullResp([_TBlock("thinking", thinking="", signature="s")], stop_reason="max_tokens")
+
+
+def test_truncated_thinking_retries_once_with_higher_max_tokens(caplog):
+    from botkit.llm import TRUNCATION_RETRY_MAX_TOKENS
+    ok = _FullResp([_TBlock("thinking", thinking=""), _TBlock("text", text='[{"a": 1}, {"b": 2}]')])
+    cl = FakeClient([_thinking_only(), ok])
+    with caplog.at_level("WARNING", logger="botkit.llm"):
+        assert llm_json("q", model=HAIKU, max_tokens=4000, client=cl) == [{"a": 1}, {"b": 2}]
+    assert [c["max_tokens"] for c in cl.calls] == [4000, TRUNCATION_RETRY_MAX_TOKENS]
+    assert any("1회 재시도" in r.message for r in caplog.records)
+
+
+def test_truncated_twice_raises_llm_truncated():
+    from botkit.llm import LLMTruncated
+    cl = FakeClient([_thinking_only(), _thinking_only()])
+    with pytest.raises(LLMTruncated) as ei:
+        llm_json("q", model=HAIKU, max_tokens=4000, client=cl)
+    assert isinstance(ei.value, LLMParseError)                  # 기존 except LLMParseError 로 잡힘
+    assert ei.value.max_tokens == 16000 and ei.value.stop_reason == "max_tokens"
+    assert "thinking" in str(ei.value) and len(cl.calls) == 2
+
+
+def test_truncated_array_does_not_return_inner_partial_object():
+    # 예전엔 '[' 파싱 실패 후 안쪽 {"a": 1} 을 돌려줬다
+    cut = _FullResp([_TBlock("text", text='[{"a": 1}, {"b": ')], stop_reason="max_tokens")
+    from botkit.llm import LLMTruncated
+    with pytest.raises(LLMTruncated):
+        llm_json("q", model=HAIKU, client=FakeClient([cut]), truncation_retry_max_tokens=None)
+
+
+def test_max_tokens_with_complete_json_returns_without_retry():
+    resp = _FullResp([_TBlock("text", text='{"a": 1}\n추가 설명이 길어서 잘')], stop_reason="max_tokens")
+    cl = FakeClient([resp])
+    assert llm_json("q", model=HAIKU, client=cl) == {"a": 1} and len(cl.calls) == 1
+
+
+def test_no_retry_when_already_at_retry_cap():
+    from botkit.llm import LLMTruncated
+    cl = FakeClient([_thinking_only()])
+    with pytest.raises(LLMTruncated):
+        llm_json("q", model=HAIKU, max_tokens=20000, client=cl)
+    assert len(cl.calls) == 1
+
+
+def test_effort_and_thinking_params_sent():
+    cl = FakeClient(['{"ok": 1}', '{"ok": 1}', '{"ok": 1}', '{"ok": 1}'])
+    llm_json("q", model=HAIKU, client=cl)
+    assert "output_config" not in cl.calls[0] and "thinking" not in cl.calls[0]     # 기본은 안 보냄
+    llm_json("q", model=HAIKU, client=cl, effort="low")
+    assert cl.calls[1]["output_config"] == {"effort": "low"} and "thinking" not in cl.calls[1]
+    llm_json("q", model=HAIKU, client=cl, thinking=False, effort="high")
+    assert cl.calls[2]["thinking"] == {"type": "disabled"}
+    from botkit.llm import llm_call
+    llm_call("q", model=HAIKU, client=cl, thinking=True)
+    assert cl.calls[3]["thinking"] == {"type": "adaptive"}
+
+
+@pytest.mark.parametrize("model, kw", [
+    (HAIKU, {"thinking": False, "effort": "max"}),               # disabled 는 high 이하만
+    (HAIKU, {"thinking": False, "effort": "xhigh"}),
+    (SONNET, {"thinking": False}),                               # Sonnet 5.5 는 disabled 400
+    ("claude-opus-5-5", {"thinking": False}),
+    (HAIKU, {"effort": "minimal"}),
+])
+def test_invalid_thinking_combos_raise_before_call(model, kw):
+    cl = FakeClient([])
+    with pytest.raises(ValueError):
+        llm_json("q", model=model, client=cl, **kw)
+    assert cl.calls == []
 
 
 def test_llm_json_empty_end_turn_is_plain_parse_error():

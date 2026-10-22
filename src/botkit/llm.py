@@ -28,6 +28,15 @@
         출력이 짧으면 실제 사용 토큰은 작다). 하한 이상 값은 그대로.
       · 텍스트가 비었는데 stop_reason=max_tokens 면 경고 로그 + LLMParseError 메시지에 사유
         ("thinking 이 max_tokens 소진")를 적는다. JSON 이 잘려 깨진 경우도 stop_reason 을 덧붙인다.
+  - thinking 이 max_tokens 를 소진하는 큰 배치(dalbots-bmi.214):
+      · llm_json 은 stop_reason=max_tokens 로 잘리면(텍스트 없음 또는 최상위 JSON 미완결) max_tokens 를
+        truncation_retry_max_tokens(기본 16000)로 올려 **1회 재시도**한다. 그래도 잘리면 LLMTruncated
+        (LLMParseError 하위 — 기존 except LLMParseError 그대로 잡힘). None 이면 재시도 안 함.
+        잘린 응답에서 뒤쪽 부분 객체만 파싱해 돌려주던 구 동작(배열이 잘리면 첫 원소만 반환)도 없앴다.
+      · thinking 깊이 조절(opt-in): effort="low"|"medium"|"high"|"xhigh"|"max" → output_config.effort
+        (Haiku 5.5 기본 medium). thinking=False → {"type":"disabled"} — Haiku 5.5·Opus 5 는 effort high
+        이하에서만 받고(xhigh/max 와 같이 쓰면 400), Opus 5.5·Sonnet 5.5·Fable 은 400 이라 여기서 ValueError.
+        thinking 예산(budget_tokens)은 5.x 전부 400 이라 제공하지 않는다.
 """
 from __future__ import annotations
 
@@ -50,6 +59,11 @@ DEFAULT_MODEL = HAIKU
 # 5.x 세대(Haiku/Sonnet/Opus/Fable/Mythos 5.x)는 thinking 기본 on → max_tokens 하한 적용 대상.
 _THINKING_DEFAULT_RE = re.compile(r"^(?:anthropic\.)?claude-(?:haiku|sonnet|opus|fable|mythos)-5(?:-|$)")
 MIN_THINKING_MAX_TOKENS = 1024
+# stop_reason=max_tokens 로 잘린 llm_json 응답을 1회 재시도할 때의 max_tokens(비스트리밍 HTTP 타임아웃 안전선).
+TRUNCATION_RETRY_MAX_TOKENS = 16000
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# thinking={"type":"disabled"} 를 400 으로 거절하는 모델(effort 무관).
+_NO_DISABLE_RE = re.compile(r"^(?:anthropic\.)?claude-(?:opus-5-5|sonnet-5-5|fable|mythos)(?:-|$)")
 
 MAX_IMAGE_EDGE = 7900
 _RETRY_STATUSES = {429, 500, 502, 503, 529}
@@ -81,6 +95,19 @@ class LLMParseError(LLMError):
         self.detail = detail
         self.stop_reason = stop_reason
         super().__init__(f"JSON 파싱 실패: {detail} | {(text or '')[:200]!r}")
+
+
+class LLMTruncated(LLMParseError):
+    """stop_reason=max_tokens 로 출력이 잘렸다(thinking 이 상한을 소진했거나 JSON 이 끝나기 전에 끊김).
+
+    재시도(truncation_retry_max_tokens)까지 잘린 경우. 호출자는 배치를 줄이거나 effort="low" /
+    thinking=False 를 쓰거나 max_tokens 를 올린다. max_tokens: 마지막 시도의 max_tokens.
+    """
+
+    def __init__(self, text: str, detail: str = "", stop_reason: Optional[str] = "max_tokens",
+                 max_tokens: Optional[int] = None):
+        super().__init__(text, detail, stop_reason=stop_reason)
+        self.max_tokens = max_tokens
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +144,19 @@ def extract_json(text: str) -> Any:
             last_err = str(e)
             continue
     raise LLMParseError(text, last_err or "JSON 시작 문자 없음")
+
+
+def _first_json_complete(text: str) -> tuple[bool, Any]:
+    """첫 `{`/`[` 에서 시작하는 최상위 JSON 이 완결됐는가. 잘린 출력에서 뒤쪽 부분 객체를 집지 않기 위함."""
+    body = strip_code_fences(text or "").strip()
+    starts = [i for i, ch in enumerate(body) if ch in "{["]
+    if not starts:
+        return False, None
+    try:
+        value, _ = json.JSONDecoder().raw_decode(body, starts[0])
+        return True, value
+    except json.JSONDecodeError:
+        return False, None
 
 
 # ---------------------------------------------------------------------------
@@ -262,9 +302,27 @@ def _empty_reason(resp, max_tokens: int) -> Optional[str]:
             f"(content={_block_types(resp)})")
 
 
+def _thinking_params(model: str, effort: Optional[str], thinking: Optional[bool]) -> dict:
+    """effort/thinking 인자 → messages.create kwargs. API 가 400 낼 조합은 여기서 ValueError."""
+    out: dict[str, Any] = {}
+    if effort is not None:
+        if effort not in EFFORTS:
+            raise ValueError(f"effort 는 {EFFORTS} 중 하나: {effort!r}")
+        out["output_config"] = {"effort": effort}
+    if thinking is False:
+        if _NO_DISABLE_RE.match(model or ""):
+            raise ValueError(f"{model} 은 thinking 끄기(disabled)를 받지 않는다(400) — effort='low' 를 쓸 것")
+        if effort in ("xhigh", "max"):
+            raise ValueError(f"thinking=False 는 effort high 이하에서만 가능(400): effort={effort!r}")
+        out["thinking"] = {"type": "disabled"}
+    elif thinking is True:
+        out["thinking"] = {"type": "adaptive"}
+    return out
+
+
 def _request(
     prompt, *, system, images, model, max_tokens, temperature, retries, backoff_base,
-    cache_system, client, api_key, sleep,
+    cache_system, client, api_key, sleep, effort=None, thinking=None,
 ):
     """Claude 호출 → 원본 응답 객체. (text, stop_reason, 실제 max_tokens) 해석은 호출자가."""
     if isinstance(prompt, str):
@@ -280,6 +338,7 @@ def _request(
     if eff != max_tokens:
         logger.debug(f"max_tokens {max_tokens} → {eff} (thinking 모델 {model} 하한)")
     kwargs: dict[str, Any] = {"model": model, "max_tokens": eff, "messages": messages}
+    kwargs.update(_thinking_params(model, effort, thinking))
     if system:
         if cache_system:
             kwargs["system"] = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
@@ -337,16 +396,20 @@ def llm_call(
     client=None,
     api_key: Optional[str] = None,
     sleep=time.sleep,
+    effort: Optional[str] = None,
+    thinking: Optional[bool] = None,
 ) -> str:
     """Claude 호출 → 응답 텍스트(type=="text" 블록만). 429/529/5xx 지수 백오프, 401/403/크레딧 → LLMUnavailable.
 
     thinking 기본 모델은 max_tokens 하한(MIN_THINKING_MAX_TOKENS) 적용. 텍스트가 비고
     stop_reason=max_tokens 면 경고 로그만 남기고 "" 반환(판단은 호출자).
+    effort / thinking: llm_json 과 같음(기본 None = 보내지 않음 → 모델 기본).
     """
     resp = _request(
         prompt, system=system, images=images, model=model, max_tokens=max_tokens,
         temperature=temperature, retries=retries, backoff_base=backoff_base,
         cache_system=cache_system, client=client, api_key=api_key, sleep=sleep,
+        effort=effort, thinking=thinking,
     )
     text = _text_of(resp)
     if not text.strip():
@@ -369,6 +432,9 @@ def llm_json(
     client=None,
     api_key: Optional[str] = None,
     sleep=time.sleep,
+    effort: Optional[str] = None,
+    thinking: Optional[bool] = None,
+    truncation_retry_max_tokens: Optional[int] = TRUNCATION_RETRY_MAX_TOKENS,
 ) -> Any:
     """Claude 에게 JSON 을 받아 파싱해 돌려준다(dict/list).
 
@@ -376,29 +442,52 @@ def llm_json(
     model 이 thinking 기본 모델(HAIKU/SONNET 등 5.x)이면 max_tokens 는 최소 MIN_THINKING_MAX_TOKENS(1024)
     로 올려 보낸다 — thinking 토큰도 max_tokens 에 포함되기 때문.
 
+    effort: "low"|"medium"|"high"|"xhigh"|"max" → output_config.effort. thinking 을 덜 하게 하는 기본 수단
+        (Haiku 5.5 기본 medium). None 이면 보내지 않는다.
+    thinking: False → thinking 끄기({"type":"disabled"}, Haiku 5.5 는 effort high 이하에서만). True → adaptive
+        명시. None(기본) → 보내지 않음(5.x 는 adaptive 가 기본).
+    truncation_retry_max_tokens: 응답이 stop_reason=max_tokens 로 잘렸으면(텍스트 없음 또는 최상위 JSON 미완결)
+        max_tokens 를 이 값으로 올려 1회 재시도(기본 16000, 현재 값 이하이거나 None 이면 재시도 안 함).
+
     Raises:
         LLMUnavailable: 인증/크레딧/과부하 재시도 소진 — 커서 전진 금지.
-        LLMParseError: 응답은 왔지만 JSON 이 아님 — 이 입력만 실패.
-            text 가 비고 stop_reason=max_tokens 면 detail 에 "thinking 이 max_tokens 소진" 사유 +
-            경고 로그. 예외의 .stop_reason 에 응답 stop_reason 이 담긴다.
+        LLMTruncated: (재시도 후에도) stop_reason=max_tokens 로 잘림. LLMParseError 하위라 기존 except 로 잡힌다.
+            detail 에 사유("thinking 이 max_tokens 소진" / "출력 잘림") + 경고 로그.
+        LLMParseError: 응답은 왔지만 JSON 이 아님 — 이 입력만 실패. 예외의 .stop_reason 에 응답 stop_reason.
     """
-    resp = _request(
-        prompt, system=system, images=images, model=model, max_tokens=max_tokens,
-        temperature=temperature, retries=retries, backoff_base=2.0,
-        cache_system=cache_system, client=client, api_key=api_key, sleep=sleep,
-    )
+    def call(mt: int):
+        return _request(
+            prompt, system=system, images=images, model=model, max_tokens=mt,
+            temperature=temperature, retries=retries, backoff_base=2.0,
+            cache_system=cache_system, client=client, api_key=api_key, sleep=sleep,
+            effort=effort, thinking=thinking,
+        )
+
+    eff = effective_max_tokens(model, max_tokens)
+    resp = call(max_tokens)
     text = _text_of(resp)
+    if _field(resp, "stop_reason") == "max_tokens" and not _first_json_complete(text)[0] \
+            and truncation_retry_max_tokens and truncation_retry_max_tokens > eff:
+        logger.warning(f"LLM 출력 잘림({model}, stop_reason=max_tokens, max_tokens={eff}) → "
+                       f"max_tokens={truncation_retry_max_tokens} 로 1회 재시도")
+        eff = truncation_retry_max_tokens
+        resp = call(eff)
+        text = _text_of(resp)
     stop_reason = _field(resp, "stop_reason")
-    if not text.strip():
-        reason = _empty_reason(resp, effective_max_tokens(model, max_tokens))
-        if reason:
+
+    if stop_reason == "max_tokens":
+        if not text.strip():
+            reason = _empty_reason(resp, eff)
             logger.warning(f"LLM 빈 응답 ({model}): {reason}")
-            raise LLMParseError(text, f"빈 응답 — {reason}", stop_reason=stop_reason)
+            raise LLMTruncated(text, f"빈 응답 — {reason}", max_tokens=eff)
+        complete, value = _first_json_complete(text)
+        if complete:
+            return value
+        logger.warning(f"LLM 출력 잘림 ({model}): stop_reason=max_tokens, max_tokens={eff}")
+        raise LLMTruncated(text, f"JSON 미완결 (stop_reason=max_tokens — 출력 잘림, max_tokens={eff})",
+                           max_tokens=eff)
     try:
         return extract_json(text)
     except LLMParseError as e:
         e.stop_reason = stop_reason
-        if stop_reason == "max_tokens":
-            raise LLMParseError(text, f"{e.detail} (stop_reason=max_tokens — 출력 잘림)",
-                                stop_reason=stop_reason) from e
         raise

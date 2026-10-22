@@ -22,11 +22,11 @@
 """
 from .run import RunContext, alert, run
 from .sync import AbsentPolicy, Event, SyncAborted, SyncEngine, SyncState, SyncStats
-from .llm import HAIKU, SONNET, LLMError, LLMParseError, LLMUnavailable, extract_json, llm_json
+from .llm import HAIKU, SONNET, LLMError, LLMParseError, LLMTruncated, LLMUnavailable, extract_json, llm_json
 
 __all__ = [
     "run", "alert", "RunContext",
     "SyncEngine", "SyncState", "SyncStats", "SyncAborted", "Event", "AbsentPolicy",
     "llm_json", "extract_json", "HAIKU", "SONNET",
-    "LLMError", "LLMUnavailable", "LLMParseError",
+    "LLMError", "LLMUnavailable", "LLMParseError", "LLMTruncated",
 ]
