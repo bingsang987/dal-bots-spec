@@ -13,8 +13,9 @@
        NEW       state 에 없음 → (같은 summary+start 가 토픽에 이미 있으면 그 id 를 입양해 update)
                  → 없으면 create
        CHANGED   content_hash 다름 → update. 404 면 캐시에서 (summary,start) 로 복구 → 그래도 없으면 create
-     adopt_scope="category" 면 입양·404 복구 후보를 Event.category_id 가 같은 이벤트로 좁히고, 다른 key 가
-     이미 쥔 id 는 건너뛴다(공유 토픽에서 카테고리마다 같은 (summary,start) 가 있을 때 남의 것을 덮지 않게).
+     입양·404 복구는 이번 run 소스에 있는 다른 key 가 이미 쥔 id 를 건너뛴다(두 key 가 한 이벤트를 가리키지 않게).
+     adopt_scope="category" 면 후보를 Event.category_id 가 같은 이벤트로 더 좁힌다(공유 토픽에서 카테고리마다
+     같은 (summary,start) 가 있을 때 남의 것을 덮지 않게).
        UNCHANGED hash 같음 → skip
   3. **쓰기 성공 후에만 state 저장**(건별 커밋). 실패하면 state 그대로 → 다음 run 재시도.
   4. 소스에서 사라진 key(absent): 정책 keep | delete(기본). 단
@@ -22,6 +23,8 @@
        - source_complete=False(소스 일부 실패)
      면 absent 처리 전체 스킵(stats.absent_skipped 에 사유).
      `source_window=(from, to)` 를 주면 그 범위 안의 state 행만 absent 후보(과거 이벤트 보호).
+     absent 행의 id 를 이번 run 다른 key 가 쥐었으면(소스가 같은 일정을 새 key 로 재발급 → 입양) DELETE 없이
+     state 행만 지운다(ABSENT_RELINKED, stats.relinked).
   5. SyncStats 반환. 실패가 있으면 호출자(또는 run 래퍼)가 alert.
 
 dry-run: dalwiki_client 가 DRY_RUN 이면 쓰기를 가짜 처리하므로 여기선 **state 를 저장하지 않는다**
@@ -256,6 +259,7 @@ class SyncStats:
     unchanged: int = 0
     recovered: int = 0        # update 404 → 캐시로 id 복구
     deleted: int = 0          # absent 정책 delete 로 지움
+    relinked: int = 0         # absent 행의 id 를 이번 run 다른 key 가 쥠 → DELETE 없이 state 행만 제거
     absent_kept: int = 0
     absent_skipped: Optional[str] = None   # absent 처리 전체 스킵 사유
     missing: int = 0          # state 엔 있는데 토픽 윈도우 안에 id 가 없음(사람/타봇 삭제)
@@ -284,6 +288,8 @@ class SyncStats:
             parts.append(f"recover404={self.recovered}")
         if self.deleted:
             parts.append(f"delete={self.deleted}")
+        if self.relinked:
+            parts.append(f"relinked={self.relinked}")
         if self.absent_kept:
             parts.append(f"absent_keep={self.absent_kept}")
         if self.absent_skipped:
@@ -353,7 +359,7 @@ class SyncEngine:
         self.log = log or logger
         self._shared_cache = cache
         self.cache: Optional[TopicCache] = None
-        self._claimed: set[str] = set()   # 이번 run 에 어떤 key 가 쥔 event id (category 입양 제외용)
+        self._claimed: set[str] = set()   # 이번 run 소스 key 가 쥔 event id (입양 제외·ABSENT_RELINKED 판정)
 
     # -- helpers ---------------------------------------------------------
     @property
@@ -382,9 +388,12 @@ class SyncEngine:
         if self.cache is None:
             return None
         summary, start = dw._guard_summary(ev.summary), ev.start_iso()
+        # 두 scope 모두 이번 run 소스에 살아 있는 key 가 쥔 id 는 건너뛴다(.104/.68). 소스에서 사라진 key 의
+        # id 는 입양 가능 — 같은 일정을 새 key 로 재발급한 경우이고, 옛 key 는 absent 에서 ABSENT_RELINKED.
         if self.adopt_scope == "category":
             return self.cache.lookup(summary, start, category_id=ev.category_id, exclude=self._claimed)
-        return self.cache.lookup(summary, start)
+        cands = self.cache.lookup_all(summary, start, exclude=self._claimed)
+        return cands[-1] if cands else None   # 구 동작 유지: 같은 키 중 마지막 것
 
     def _save(self, ev: Event, event_id: str, h: str) -> None:
         self._claimed.add(event_id)
@@ -451,6 +460,13 @@ class SyncEngine:
         return self._create(ev, stats, h) is not None
 
     def _delete(self, key: str, row: StateRow, stats: SyncStats) -> None:
+        if row.event_id in self._claimed:
+            # 이 id 는 이번 run 소스에 있는 다른 key 가 쥐고 있다(재발급 입양 등) → 이벤트는 남기고 옛 행만 제거
+            if not self.dry_run:
+                self.state.delete(key)
+            stats.relinked += 1
+            self.log.info(f"ABSENT_RELINKED {key} {row.event_id} {row.summary!r} → state 행만 제거(DELETE 없음)")
+            return
         ok = dw.delete_event(row.event_id)
         gone = ok
         if not ok and self.cache is not None and not self.cache.has_id(row.event_id) \
@@ -498,7 +514,9 @@ class SyncEngine:
 
         cache = self._load_cache()
         existing = self.state.all()
-        self._claimed = {r.event_id for r in existing.values()}
+        source_keys = set(keys)
+        # 이번 run 소스에 있는 key 가 쥔 id + 이번 run _save 된 id. 입양 제외·absent 재연결 판정에 쓴다.
+        self._claimed = {r.event_id for k, r in existing.items() if k in source_keys}
         unchanged_keys: list[str] = []
 
         for ev in events:
@@ -543,7 +561,6 @@ class SyncEngine:
             self.state.touch(unchanged_keys)
 
         # absent
-        source_keys = set(keys)
         absent_rows = {k: r for k, r in existing.items() if k not in source_keys}
         if source_window is not None:
             lo, hi = _iso_z(source_window[0]), _iso_z(source_window[1])

@@ -297,3 +297,44 @@ def test_topic_cache_keeps_all_ids_per_key(fake_dal, soon):
     c.discard(a)
     c.discard(b)
     assert c.lookup("휴방", soon) is None and len(c) == 0
+
+
+# ---------------------------------------------------------------------------
+# W8-0 .104/.68 — 재발급 key 입양 + 같은 run absent 가 그 id 를 지우지 않음
+# ---------------------------------------------------------------------------
+def test_reissued_key_adopts_and_absent_relinks_without_delete(engine, fake_dal, soon):
+    engine.sync([mk("old", "콘서트", soon)])
+    x = engine.state.get("old").event_id
+    n_calls = len(fake_dal.calls)
+    # 소스가 같은 (summary,start) 를 새 key 로 재발급, 옛 key 는 소스에서 사라짐
+    st = engine.sync([mk("new", "콘서트", soon, description="본문 추가")])
+    assert (st.adopted, st.created, st.deleted, st.relinked, st.failed) == (1, 0, 0, 1, 0)
+    assert x in fake_dal.events                                    # 이벤트 생존
+    assert engine.state.get("new").event_id == x
+    assert engine.state.get("old") is None                         # 옛 state 행만 제거
+    assert [p for p, _ in fake_dal.calls[n_calls:] if p == "/events/delete"] == []   # DELETE 0
+    # 다음 run: UNCHANGED, MISSING 아님
+    st2 = engine.sync([mk("new", "콘서트", soon, description="본문 추가")])
+    assert (st2.unchanged, st2.missing, st2.writes) == (1, 0, 0)
+
+
+def test_topic_scope_does_not_steal_id_of_present_key(engine, fake_dal, soon):
+    engine.sync([mk("k1", "휴방", soon)])
+    x = engine.state.get("k1").event_id
+    # k1 은 소스에 그대로, k2 가 같은 (summary,start) 로 NEW → x 를 뺏지 말고 새로 만든다
+    st = engine.sync([mk("k1", "휴방", soon), mk("k2", "휴방", soon)])
+    assert (st.adopted, st.created) == (0, 1)
+    assert engine.state.get("k2").event_id != x
+    # k1 이 사라지면 k1 의 이벤트만 지워지고 k2 는 남는다
+    st2 = engine.sync([mk("k2", "휴방", soon)])
+    assert (st2.deleted, st2.relinked) == (1, 0)
+    assert x not in fake_dal.events and engine.state.get("k2").event_id in fake_dal.events
+
+
+def test_relinked_in_dry_run_keeps_state(tmp_path, fake_dal, soon):
+    eng = SyncEngine(TOPIC, tmp_path / "s.db", dry_run=False, cache_days_back=5, cache_days_forward=30)
+    eng.sync([mk("old", "콘서트", soon)])
+    dry = SyncEngine(TOPIC, tmp_path / "s.db", dry_run=True, cache_days_back=5, cache_days_forward=30)
+    st = dry.sync([mk("new", "콘서트", soon)])
+    assert (st.relinked, st.deleted) == (1, 0)
+    assert dry.state.get("old") is not None and dry.state.get("new") is None
