@@ -44,6 +44,7 @@ _READ_ONLY_PATHS = frozenset({
     "/topics/histories",
     "/categories/list",
     "/categories/get",
+    "/categories/tree",      # 실제 카테고리 조회 엔드포인트(POST). dalbots-bmi.209
     "/legacy/resolveTopicByName",
 })
 
@@ -591,6 +592,24 @@ def get_event(event_id: str) -> Optional[dict]:
         return None
     body = resp.get("body")
     return body if isinstance(body, dict) else None
+
+
+# ── 카테고리 ──────────────────────────────────────────────────────────────
+
+def categories_tree(topic_id: str) -> list[dict]:
+    """/categories/tree — 토픽의 카테고리 목록(조회 전용, DRY_RUN 에서도 실제 호출).
+
+    실패(네트워크 소진·HTTP≠200)는 DalWikiError 로 올린다 — '카테고리 없음'과 '조회 실패'를
+    구분해야 봇이 카테고리를 중복 생성하거나 categoryId 없이 등록하지 않는다(dalbots-bmi.209).
+    """
+    resp = _post("/categories/tree", {"topicId": topic_id})
+    if not resp or resp.get("status") != 200:
+        raise DalWikiError(f"categories/tree 실패 topic={topic_id}: "
+                           f"{'HTTP ' + str(resp.get('status')) if resp else '네트워크 재시도 소진'}")
+    body = resp.get("body")
+    if isinstance(body, dict):
+        body = body.get("categories") or body.get("items") or body.get("tree") or []
+    return [c for c in (body or []) if isinstance(c, dict)]
 
 
 # ── TopicCache: (summary, start) → id 자연 키 캐시 ──────────────────────────

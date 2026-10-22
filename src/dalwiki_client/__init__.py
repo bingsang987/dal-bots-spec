@@ -15,6 +15,7 @@
 """
 
 from .client import (
+    categories_tree,
     API_BASE,
     DalWikiError,
     ListFailed,

@@ -178,3 +178,26 @@ def test_discord_notify_action_filter(monkeypatch):
     monkeypatch.setenv("DALWIKI_DISCORD_NOTIFY", "none")
     dn.enqueue("/events/create", {"id": "x"}, {})
     assert queued == []
+
+
+def test_categories_tree_is_read_only_in_dry_run(monkeypatch):
+    """DRY_RUN 이어도 /categories/tree 는 실제 호출된다(가짜 dry- id 금지, dalbots-bmi.209)."""
+    from dalwiki_client import client as C
+    monkeypatch.setenv("DRY_RUN", "true")
+    seen = {}
+
+    def fake_post_real(path, body, retries=3):
+        seen["path"] = path
+        return {"status": 200, "body": {"categories": [{"id": "c1", "name": "A"}]}}
+    monkeypatch.setattr(C, "_get_session", lambda: (_ for _ in ()).throw(AssertionError("no net")))
+    assert "/categories/tree" in C._READ_ONLY_PATHS
+    monkeypatch.setattr(C, "_post", fake_post_real)
+    assert C.categories_tree("T")[0]["id"] == "c1" and seen["path"] == "/categories/tree"
+
+
+def test_categories_tree_failure_raises(monkeypatch):
+    from dalwiki_client import client as C
+    monkeypatch.setattr(C, "_post", lambda path, body, retries=3: {"status": 500, "body": None})
+    import pytest as _pt
+    with _pt.raises(C.DalWikiError):
+        C.categories_tree("T")
