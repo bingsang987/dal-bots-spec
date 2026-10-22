@@ -121,3 +121,61 @@ DALWIKI_DISCORD_NOTIFY=create,delete     # 미설정=전부, none=끔(HEALTH-ALE
 - stellivebot(배치 D): 이미 `present | alive`로 자체 확인 중 → `sweep(..., verify=False)`로 GET 중복 제거(선택).
 - 자체 absent 비율 가드를 가진 봇(PLBOT·KBObot·ipobot·econcal·housing·tumblbug·coupon·lckbot·lckteambot): 엔진 가드와 겹친다. 분모가 틀린 봇 가드(lck 계열)는 지우고 엔진 가드에 맡겨도 된다.
 - 필수 변경은 없다(기존 호출 그대로 동작).
+
+## 6. 패키지 후속(W8-E) 동작 변화
+
+W8-E 결과(2026-10-22, 커밋 f2863cd~dbeace7). W8 봇 배치가 남긴 패키지 이슈 9건(.225 .215 .218 .216 .217 .214 .89 .219 .228). 공개 시그니처는 그대로이고 새 인자는 전부 키워드·기본값 있음. editable 설치라 **다음 run부터 전 봇에 적용**된다. pytest 159 → 201.
+
+### 기본값만으로 동작이 바뀌는 것
+| 항목 | 전 | 후 | 봇이 볼 것 |
+|---|---|---|---|
+| .225 histories 판정 함수 | `was_human_edited`·`was_human_deleted`·`get_latest_action`·`deletion_actor` 가 조회 실패를 `False`/`None`(=사람 편집·삭제 없음)으로 돌려줌 → 사람 편집 위에 PATCH 가능 | 실패면 `HistoriesFailed`(DalWikiError) 예외. 구 동작은 `raise_on_fail=False`. `list_histories` 는 기본 그대로 `[]`(+경고 로그), `raise_on_fail=True` 면 예외 | 직접 호출: **taxcalbot** legacy 이관(`was_human_edited/deleted`)은 histories 장애 때 예외 종료 → alert(이관은 legacy DB 있을 때만). collabcafebot legacy 스크립트도 같음 |
+| .225 SyncEngine `protect_human_edits` | histories 실패 = 보호 안 함(PATCH 진행) | 실패면 그 건 PATCH 보류: `failed+1`, state 그대로 → 다음 run 재확인 | protect 쓰는 봇(약 25개)이 histories 장애 때 `fail=N`. `st.failed` 로 alert 하는 봇은 alert 가 날 수 있음 |
+| .225 TombstoneStore.sweep_from_mapping | 실패 = 이력 없음으로 건너뜀 | 같은 결과(그 키 보류) + 경고 로그 | 없음 |
+| .215 PROTECTED 해시 저장 | 사람 편집으로 PATCH 생략 시 state 저장 안 함 → 매 run CHANGED → histories 재호출(입양 경로는 매 run 재입양) | key→id·hash 저장 → 다음 run UNCHANGED. 소스가 다시 바뀌면 그때 histories 재확인 | `protected=N` 이 매 run 대신 소스가 바뀐 run 에만 나온다. histories 호출 감소 |
+| .217 `update_or_create_event` 404 복구 | 캐시에서 (summary,start)만 보고 아무 카테고리나 PATCH | `category_id` 를 주면 같은 카테고리 → 카테고리 없는 이벤트 순으로만 복구. 404 난 id 자신 제외 | 공유 토픽에서 다른 멤버의 같은 제목·시각 이벤트를 덮지 않음. 대신 복구 못 하면 (create_on_404 기본 True) create |
+| .214 `llm_json` 잘림 | stop_reason=max_tokens 면 바로 LLMParseError. 잘린 배열에선 안쪽 첫 객체만 파싱해 **성공처럼** 반환 | 잘렸으면(텍스트 없음/최상위 JSON 미완결) `max_tokens=16000` 으로 **1회 재시도**, 그래도 잘리면 `LLMTruncated`(LLMParseError 하위, `.max_tokens`). 부분 객체 반환 없음. `truncation_retry_max_tokens=None` 이면 재시도 안 함 | 잘림 run 에 LLM 호출 1회 추가(비용). 기존 `except LLMParseError` 그대로 잡힘. 경고 로그 `LLM 출력 잘림 … 1회 재시도` |
+| .89 `vod.safe_summary` | 100자 절단 후 끝 공백 남음 → 서버는 strip 해 99자 → 매 run summary 불일치 PATCH | 절단 후 `rstrip()` | 100번째 글자가 공백인 긴 제목의 영구 PATCH 가 멈춤(5 VOD 봇) |
+| .219 `alert()` 콘솔 | print 한 줄 + logger.error 가 콘솔 핸들러로 또 찍혀 콘솔·lastrun `.out` 에 2줄 | 콘솔(stdout/stderr) StreamHandler 에선 alert 레코드를 걸러 **1줄**. 파일 로그엔 그대로 | health_check 가 alert 줄 수를 세면 값이 절반(정상값)으로 |
+| .219 `MissingGuard.__init__` | `executescript`+`commit` — dry-run 에서도 DDL, 호출자 conn 의 미커밋 트랜잭션을 COMMIT | 테이블 없을 때만 단일 `execute`, 호출자 트랜잭션 중이면 commit 안 함. dry-run 은 테이블을 만들지 않음(없으면 `is_missing`/`keys` 는 메모리만) | 없음(봇은 missing_keys 를 직접 조회하지 않음 — 확인함) |
+| .219 histories `_post` 바인딩 | import 시점 바인딩 → `dw._post` 몽키패치가 histories 엔 안 먹어 테스트가 실 API 로 나감 | 호출 시점 `client._post` | 봇 테스트에서 `dw._post` 하나만 바꾸면 됨 |
+
+### 새 옵션(기본값은 구 동작)
+```python
+from botkit.sync import SyncEngine
+eng = SyncEngine(TOPIC, "state.db", absent="delete", protect_human_edits=True,
+                 protect_human_absent=True,   # .215 사람 CREATE/UPDATE 이벤트는 absent 때 DELETE 대신 state 만 제거(HUMAN_KEEP)
+                                              #      histories 실패면 그 행 삭제 보류(failed+1). 삭제 후보마다 histories 1회
+                 clear_empty_fields=True)     # .216 Event 의 description/location/link 가 비면 PATCH 때 null 로 지움
+st = eng.sync(events, source_complete=ok, source_window=(lo, hi),
+              allow_empty=True)               # .218 상위에서 완전 조회한 정상 0건 → absent 진행(가드: source_complete·mass_absent 유지)
+st.human_kept                                 # summary() 에 human_kept=N
+
+# .228 이관 후 서버와 같은 행은 hash 확정 → 첫 run 대량 PATCH 없음(events/get 1회/행)
+eng.state.import_legacy(pairs, summary_start=meta)
+eng.verify_imported(events)                   # 반환: 확정 건수. Event.matches_server(srv) 도 공개
+```
+```python
+from dalwiki_client import update_event, update_or_create_event, list_histories, HistoriesFailed
+update_event(eid, description=None, link="", clear_empty=("description", "link"))   # .216 null 전송(서버 OpenAPI: string|null 확인)
+update_or_create_event(old_id, topic_id=T, ..., category_id=C, cache=cache,
+                       create_on_404=False)   # .217 404(+복구 실패) → create 없이 None. 메인·공유 토픽 쓰기용
+hist = list_histories(T, event_id=eid, raise_on_fail=True)   # .225 실패면 HistoriesFailed, [] = 진짜 이력 없음
+```
+```python
+from botkit.llm import llm_json, HAIKU, LLMTruncated
+data = llm_json(prompt, model=HAIKU, max_tokens=4000,
+                effort="low",                 # .214 output_config.effort — thinking 을 덜 함(Haiku 5.5 기본 medium)
+                thinking=False)               # .214 thinking 끄기({"type":"disabled"}). Haiku 5.5 는 effort high 이하에서만,
+                                              #      Sonnet 5.5·Opus 5.5 는 400 → 호출 전 ValueError
+# thinking 예산(budget_tokens)은 5.x 전부 400 이라 옵션 없음. 큰 배치는 effort="low" 또는 thinking=False 가 우선.
+```
+
+### 봇 쪽에서 바꿔야 할 호출(필수 아님 — 기존 호출 그대로 동작)
+- **streamersyncbot**: 봇 레벨 `human_absent_holds`(57b3bb5) → `SyncEngine(protect_human_absent=True)` 로 대체 가능. (토픽×카테고리) 엔진은 상위 소스 조회가 완전할 때 `sync(..., allow_empty=True)`(.218). 소스에서 비운 본문·장소·링크를 지우려면 `clear_empty_fields=True`(.216, protect_human_edits 와 같이).
+- **stellive·aesther·cluez·chzzk**: 자체 404 무생성 래퍼 대신 `update_or_create_event(..., create_on_404=False, category_id=…)` 가능. 아직 cache 없이 `update_or_create_event` 를 부르는 개별·그룹 사본 쓰기는 메인/공유 토픽이면 `create_on_404=False`.
+- **canceltickbot·convinibot**(HAIKU 큰 배치): 3347363 의 배치 20·max_tokens 12000 우회는 그대로 둬도 된다. 잘림이 또 나면 `effort="low"` 또는 `thinking=False`, `except LLMTruncated` 로 배치 분할. 다른 HAIKU 배치 봇(convini extract 4000·3000, gachabot, qwerbot 등)은 패키지 재시도가 자동 적용.
+- **runbot**: `_same_as_server` + `client._guard_*`·`_iso_z`(private) → `engine.verify_imported(events)`(.228).
+- **taxcalbot**: legacy 이관의 `was_human_edited/deleted` 가 이제 실패 시 예외 — 그대로 두면 그 run 예외 종료·alert, 다음 run 재시도(의도된 동작). 무시하려면 `raise_on_fail=False`.
+- **dalwiki-agent**: 자체 `_histories_page`/`HistoriesFailed`(3c42622) → `list_histories(..., raise_on_fail=True)` + `dalwiki_client.HistoriesFailed` 로 교체 가능.
+- **laftelbot·dummybot·streamersyncbot**: `list_histories` 직접 호출에서 실패와 빈 이력을 구분하려면 `raise_on_fail=True`.
