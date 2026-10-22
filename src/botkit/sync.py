@@ -165,6 +165,7 @@ class SyncState:
         self.conn = sqlite3.connect(self.path)
         self.conn.executescript(self._SCHEMA)
         self.conn.commit()
+        self.in_memory = False
 
     @staticmethod
     def _now() -> str:
@@ -224,9 +225,27 @@ class SyncState:
         self.conn.commit()
         return cur.rowcount
 
-    def import_legacy(self, rows: Iterable[tuple[str, str]], summary_start: Optional[dict] = None) -> int:
+    def to_memory(self) -> None:
+        """이 state 를 메모리 사본으로 바꾼다(파일은 그대로). 이후 쓰기는 이 프로세스에서만 보인다 — dry-run 용."""
+        if self.in_memory:
+            return
+        mem = sqlite3.connect(":memory:")
+        self.conn.backup(mem)
+        self.conn.close()
+        self.conn = mem
+        self.in_memory = True
+        logger.info(f"SyncState[{self.topic_id}] dry-run → 메모리 사본으로 전환({self.path} 는 변경 없음)")
+
+    def import_legacy(self, rows: Iterable[tuple[str, str]], summary_start: Optional[dict] = None,
+                      *, dry_run: Optional[bool] = None) -> int:
         """기존 봇 DB 의 (key, event_id) 를 이관. content_hash 는 빈 값 → 첫 run 에서 CHANGED 로 1회 PATCH 된다
-        (서버 상태를 모르는데 hash 를 지어내면 안 됨)."""
+        (서버 상태를 모르는데 hash 를 지어내면 안 됨).
+
+        dry_run: None 이면 dalwiki_client 의 DRY_RUN 판정. dry-run 이면 메모리 사본(`to_memory`)에만 넣고
+            파일은 건드리지 않는다 — 같은 프로세스의 dry-run sync 는 이관된 행을 보지만 다음 실제 run 엔 남지 않는다.
+        """
+        if dw._is_dry_run() if dry_run is None else dry_run:
+            self.to_memory()
         n = 0
         now = self._now()
         for key, eid in rows:

@@ -457,3 +457,29 @@ def test_absent_delete_5xx_still_fails(engine, fake_dal, soon):
     st = engine.sync([mk("k1", "AA", soon)])
     assert (st.deleted, st.failed) == (0, 1) and "status=500" in st.failures[0]
     assert engine.state.get("k2") is not None
+
+
+# ---------------------------------------------------------------------------
+# W8-0 공통 패턴(스포츠 5) — import_legacy dry-run 누수 제거
+# ---------------------------------------------------------------------------
+def test_import_legacy_dry_run_stays_in_memory(tmp_path, monkeypatch, soon):
+    path = tmp_path / "s.db"
+    s = SyncState(path, TOPIC)
+    s.put("live", "id-live", "h", "L", "")
+    monkeypatch.setenv("DRY_RUN", "true")
+    assert s.import_legacy([("a", "id-a"), ("b", "id-b")]) == 2      # dry_run=None → env 판정
+    assert s.in_memory and s.get("a") is not None and s.get("live") is not None
+    s.close()
+    fresh = SyncState(path, TOPIC)
+    assert fresh.get("a") is None and fresh.get("live") is not None  # 파일엔 이관 행 없음
+
+
+def test_import_legacy_explicit_flag_and_live_commit(tmp_path, monkeypatch):
+    monkeypatch.delenv("DRY_RUN", raising=False)
+    path = tmp_path / "s.db"
+    s = SyncState(path, TOPIC)
+    s.import_legacy([("a", "id-a")], dry_run=True)
+    assert SyncState(path, TOPIC).get("a") is None
+    s2 = SyncState(path, TOPIC)
+    s2.import_legacy([("b", "id-b")])                                # 실제 run → 파일 commit
+    assert not s2.in_memory and SyncState(path, TOPIC).get("b") is not None
