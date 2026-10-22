@@ -503,3 +503,16 @@ def test_normal_absent_delete_does_not_alert(engine, fake_dal, soon, capsys):
     st = engine.sync([mk("a", "A", soon)])
     assert st.deleted == 1 and st.absent_skipped is None
     assert _alert_lines(capsys.readouterr().out) == []
+
+
+def test_keep_policy_never_sets_absent_skipped_or_alerts(tmp_path, fake_dal, soon, capsys):
+    """absent='keep' 엔진은 source=0/incomplete 여도 '보류' alert 를 내지 않는다(.210)."""
+    eng = SyncEngine(TOPIC, tmp_path / "k.db", absent="keep", dry_run=False,
+                     cache_days_back=5, cache_days_forward=30)
+    eng.sync([mk("a", "A", soon), mk("b", "B", soon)])
+    capsys.readouterr()
+    st = eng.sync([mk("a", "A", soon)], source_complete=False)
+    assert st.absent_skipped is None and st.absent_kept == 1 and st.deleted == 0
+    st0 = eng.sync([], source_complete=True)
+    assert st0.absent_skipped is None and st0.absent_kept == 2
+    assert _alert_lines(capsys.readouterr().out) == []

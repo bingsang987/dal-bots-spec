@@ -131,3 +131,11 @@ def test_log_formatter_masks_secrets(tmp_path, monkeypatch):
     run("tbot", main, argv=[], log_dir=tmp_path, _exit=False)
     text = (tmp_path / "tbot.log").read_text(encoding="utf-8")
     assert "TKN999" not in text and "token=***&page=2" in text and "key=bot-key-1" in text
+
+
+def test_mask_secrets_covers_crtfc_and_auth_keys():
+    from botkit.run import mask_secrets
+    s = "https://opendart.fss.or.kr/api/list.json?crtfc_key=abc123&corp=1 authKey=zz access_key=q password=p1"
+    out = mask_secrets(s)
+    assert "abc123" not in out and "zz" not in out and "=q" not in out and "p1" not in out
+    assert "crtfc_key=***" in out and "corp=1" in out

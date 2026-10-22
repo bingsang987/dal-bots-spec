@@ -650,14 +650,15 @@ class SyncEngine:
 
         if not absent_rows:
             pass
+        elif self.absent == "keep":
+            # keep 은 어차피 삭제가 없다 → source=0/incomplete 판정보다 먼저(보류 alert 소음 방지, .210)
+            stats.absent_kept = len(absent_rows)
         elif len(events) == 0:
             stats.absent_skipped = "source=0"
             self.log.warning(f"소스 0건 → absent {len(absent_rows)}건 처리 스킵")
         elif not source_complete:
             stats.absent_skipped = "source_incomplete"
             self.log.warning(f"소스 일부 실패 → absent {len(absent_rows)}건 처리 스킵")
-        elif self.absent == "keep":
-            stats.absent_kept = len(absent_rows)
         elif limit is not None and len(absent_rows) > limit:
             stats.absent_skipped = "mass_absent"
             self.log.warning(f"absent 후보 {len(absent_rows)}건 > 한도 {limit} → 대량 소멸 의심, 삭제 전체 보류")

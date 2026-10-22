@@ -46,7 +46,7 @@ LOG_BACKUP_COUNT = 3
 # 시크릿 마스킹(.117/.172/.175): API 키가 URL 쿼리에 있는 봇이 requests 예외 문자열을 그대로 alert·로그에 쓴다.
 # `name=value` 의 value 를 *** 로. 맨 `key=` 는 URL 쿼리(?key= / &key=)일 때만 — SyncEngine 로그의 `key=<봇 키>` 는 보존.
 _SECRET_RE = re.compile(
-    r"((?:[?&]key)|api[_-]?key|servicekey|apikeynm|token|secret)=[^&\s]+",
+    r"((?:[?&]key)|api[_-]?key|servicekey|apikeynm|crtfc_key|auth[_-]?key|access[_-]?key|token|secret|password|passwd)=[^&\s]+",
     re.IGNORECASE,
 )
 
