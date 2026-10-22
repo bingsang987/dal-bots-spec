@@ -563,10 +563,17 @@ def update_or_create_event(
 
 
 def delete_event(event_id: str) -> bool:
+    ok, _ = delete_event_status(event_id)
+    return ok
+
+
+def delete_event_status(event_id: str) -> tuple[bool, Optional[int]]:
+    """delete_event 와 같지만 (ok, status) 를 돌려준다. status None = 네트워크 재시도 소진.
+    404(이미 없음)를 실패와 구분해야 하는 호출자(SyncEngine absent 삭제)용."""
     resp = _post("/events/delete", {"id": event_id})
     if not resp:
-        return False
-    return resp["status"] in (200, 204)
+        return False, None
+    return resp["status"] in (200, 204), resp["status"]
 
 
 def get_event(event_id: str) -> Optional[dict]:

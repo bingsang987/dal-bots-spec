@@ -520,14 +520,14 @@ class SyncEngine:
             stats.relinked += 1
             self.log.info(f"ABSENT_RELINKED {key} {row.event_id} {row.summary!r} → state 행만 제거(DELETE 없음)")
             return
-        ok = dw.delete_event(row.event_id)
-        gone = ok
-        if not ok and self.cache is not None and not self.cache.has_id(row.event_id) \
+        ok, sc = dw.delete_event_status(row.event_id)
+        # 404 = 이미 없는 이벤트 → 삭제된 걸로 간주(start_iso 없는 이관 행도, .70). 그 외 실패는 캐시로 보조 판정.
+        gone = ok or sc == 404
+        if not gone and self.cache is not None and not self.cache.has_id(row.event_id) \
                 and row.start_iso and self.cache.in_window(row.start_iso):
-            # 이미 없는 이벤트(404) — 삭제된 걸로 간주
             gone = True
         if not gone:
-            self._fail(stats, f"delete 실패 key={key} id={row.event_id}")
+            self._fail(stats, f"delete 실패 key={key} id={row.event_id} status={sc}")
             return
         if not self.dry_run:
             self.state.delete(key)

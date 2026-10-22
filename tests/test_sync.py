@@ -438,3 +438,22 @@ def test_source_incomplete_skip_also_alerts(engine, fake_dal, soon, capsys):
     assert st.absent_skipped == "source_incomplete"
     lines = _alert_lines(capsys.readouterr().out)
     assert len(lines) == 1 and "source_incomplete" in lines[0]
+
+
+# ---------------------------------------------------------------------------
+# W8-0 .70 — absent 삭제 404 관용(start_iso 없는 이관 행)
+# ---------------------------------------------------------------------------
+def test_absent_delete_404_is_gone_even_without_start(engine, fake_dal, soon):
+    engine.sync([mk("k1", "AA", soon)])
+    engine.state.import_legacy([("legacy", "already-deleted-id")])   # start_iso 없음
+    st = engine.sync([mk("k1", "AA", soon)])
+    assert (st.deleted, st.failed) == (1, 0)
+    assert engine.state.get("legacy") is None
+
+
+def test_absent_delete_5xx_still_fails(engine, fake_dal, soon):
+    engine.sync([mk("k1", "AA", soon), mk("k2", "BB", soon)])
+    fake_dal.fail_delete = True
+    st = engine.sync([mk("k1", "AA", soon)])
+    assert (st.deleted, st.failed) == (0, 1) and "status=500" in st.failures[0]
+    assert engine.state.get("k2") is not None
