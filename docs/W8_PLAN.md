@@ -37,6 +37,7 @@ theatergoodsbot .156 .157 .184 .185 .207(**SyncEngine 이식**, 공유 id 52건 
 ### C. 미디어 (ids)
 **재구축(SyncEngine)**: runbot .107 .108 .125 · gamepassbot .121 .122 .123 · gamingschedulebot .105 .106 .124(PS Plus 월 밀림 데이터 교정 포함) · moviebot .119(+.57). **패치**: animebot .112 .113 · laftelbot .114 .115 · netflixbox .116 · dramabot .118 · naehanbot .120 · onlinegamebot .126 .127 · mnetplusbot .110 .111 · festivalbot .109 · (P2: kdrama album gacha qwer collabcafe dcbot berriz·timetree 각 1)
 ### D. VOD + 운영 (ids)
+(+ .213 canceltickbot 취소마감: 인터파크 playSeq/잔여석/랭킹 API CloudFront 403 → NOL 쪽 회차·랭킹 소스 조사(브라우저 네트워크 확인 가능), 없으면 취소마감 기능 보류 결정 보고)
 chzzkvodbot .77 .78 .79 · stellivebot .98 .99 .100 .101~.103 · aesther·cluez .80 · 락 4봇 .8x(aesther `acquire_run_lock` 이식) · `update_or_create_event` → `update_event`(메인 쓰기) · streamersync P2 2 · 운영 P2: bot_scheduler 2·health_check 2·dalwiki-agent health 2(관제탑이 직접)
 
 ## 3. 응급(배치 전에 처리)
