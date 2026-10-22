@@ -42,7 +42,6 @@ chzzkvodbot .77 .78 .79 · stellivebot .98 .99 .100 .101~.103 · aesther·cluez 
 ## 3. 응급(배치 전에 처리)
 - runbot .107: `races.db` f1c2b26906c896b3 sources_json에서 roadrun 41642 제거(11-24 시한). 배치 C가 그 전에 끝나면 코드 수정으로 대체.
 - gamingschedulebot .105: PS Plus 2026-10 라인업이 11월로 등록된 이벤트 교정(배치 C).
-- 인터파크 CloudFront 403(10-21 19:3x~): 봇·브라우저 UA 모두 403 → IP/WAF 차단. 봇은 `absent_skipped`로 안전. 결정 필요: ① 대기(차단 해제 여부 매일 확인, 패트롤에 소스별 0건 추적 추가) ② 다른 경로(모바일 API·RSS) 조사 → beads .14 '죽은 소스'에 합류.
-
+- 인터파크(.179/.180, 10-21 19:3x~): **차단이 아니라 소스 이전.** `tickets.interpark.com/api/open-notice/notice-list`가 200+빈 body(폐기), 공지 페이지는 `https://nol.yanolja.com/ticket/display/upcoming`(NOL 티켓)로 리다이렉트. 새 페이지는 SSR HTML에 목록이 들어 있고(상품 링크 `/ticket/products/<id>`, RSC payload `self.__next_f.push` 28청크에 'upcoming-list' 데이터), 별도 JSON API 호출 없음(브라우저 네트워크 확인). 배치 B: `scraper_interpark.py`(ticketbot·canceltickbot 공유 사본)를 NOL SSR/RSC 파서로 교체, 장르·지역 필터와 페이지네이션은 쿼리 확인, 상세는 `/ticket/products/<id>`. 봇은 그동안 `absent_skipped`로 안전.
 ## 4. 순서
 W8-0(패키지) → A+B 병렬 → C+D 병렬 → 관제탑: 패키지 diff 리뷰, 전 토픽 패트롤 재실행, W7 이슈 전수 close 확인, 계획서·메모리 갱신.
