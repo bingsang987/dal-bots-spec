@@ -87,3 +87,47 @@ def test_alert_sends_via_dalwiki_webhook(monkeypatch):
     assert len(sent) == 1 and sent[0][0] == "https://discord.test/hook"
     emb = sent[0][1]["embeds"][0]
     assert emb["title"] == f"{ALERT_TAG} kbobot" and emb["description"] == "소스 0건"
+
+
+# W8-0 시크릿 마스킹(.117/.172/.175) — alert · run() 예외 · 로그 포맷터
+def test_mask_secrets_patterns():
+    from botkit.run import mask_secrets
+    s = mask_secrets("GET http://x/api?serviceKey=AbC%2B1==&pageNo=1&key=G00gle token=t0k "
+                     "api_key=k-1 apiKeyNm=nm secret=s3 sync fail: create 실패 key=k1 'X'")
+    for raw in ("AbC%2B1", "G00gle", "t0k", "k-1", "=nm", "s3"):
+        assert raw not in s
+    assert "serviceKey=***&pageNo=1&key=***" in s
+    assert "실패 key=k1" in s                                  # 봇 키 로그는 보존
+
+
+def test_alert_masks_secrets(capsys, monkeypatch):
+    monkeypatch.setattr(runmod, "_current_bot", "housingbot")
+    line = alert("HTTPError for url: https://apis.data.go.kr/x?serviceKey=REALKEY123&numOfRows=10", discord=False)
+    assert "REALKEY123" not in line and "serviceKey=***" in line
+    assert "REALKEY123" not in capsys.readouterr().out
+
+
+def test_run_exception_and_traceback_masked(tmp_path, capfd, monkeypatch):
+    monkeypatch.delenv("DRY_RUN", raising=False)
+
+    def main():
+        raise RuntimeError("Max retries exceeded with url: /api?api_key=SUPERSECRET&q=1")
+
+    code = run("tbot", main, argv=[], log_dir=tmp_path, _exit=False)
+    out, err = capfd.readouterr()
+    assert code == 1
+    assert "SUPERSECRET" not in out and "SUPERSECRET" not in err
+    assert f"{ALERT_TAG} tbot: 예외 종료 — RuntimeError:" in out and "api_key=***" in out
+    assert "Traceback" in out + err
+    assert "SUPERSECRET" not in (tmp_path / "tbot.log").read_text(encoding="utf-8")
+
+
+def test_log_formatter_masks_secrets(tmp_path, monkeypatch):
+    monkeypatch.delenv("DRY_RUN", raising=False)
+
+    def main(ctx):
+        ctx.log.warning("fetch 실패 https://x/y?token=TKN999&page=2 (key=bot-key-1)")
+
+    run("tbot", main, argv=[], log_dir=tmp_path, _exit=False)
+    text = (tmp_path / "tbot.log").read_text(encoding="utf-8")
+    assert "TKN999" not in text and "token=***&page=2" in text and "key=bot-key-1" in text

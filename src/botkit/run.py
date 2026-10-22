@@ -16,6 +16,7 @@
   - 로깅: 콘솔(stdout, utf-8) + RotatingFileHandler(`<log_dir>/<bot_name>.log`, 5MB × 3)
   - `--dry-run` 표준 처리: argv 에서 떼어내고 os.environ["DRY_RUN"]="true" (dalwiki_client 가 매 호출 읽음)
   - 처리되지 않은 예외 → 로그 + `[HEALTH-ALERT] <bot>: 예외 종료 …` + exit 1
+  - 시크릿 마스킹: alert·예외 메시지·traceback·로그 포맷터에서 `api_key=…`/`serviceKey=…`/`token=…` 등 → `=***`
   - `alert(msg)`: `[HEALTH-ALERT] <bot>: msg` 를 stdout 에 flush 출력 + logger.error (+ `DALWIKI_DISCORD_WEBHOOK_URL` 웹훅 있으면 `dalwiki_client.discord_notify.send_alert`)
   - main_fn 이 int 를 돌려주면 그걸 exit code 로 쓴다
 
@@ -30,6 +31,7 @@ from __future__ import annotations
 import inspect
 import logging
 import os
+import re
 import sys
 import traceback
 from dataclasses import dataclass, field
@@ -40,6 +42,26 @@ from typing import Callable, Optional
 ALERT_TAG = "[HEALTH-ALERT]"
 LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_BACKUP_COUNT = 3
+
+# 시크릿 마스킹(.117/.172/.175): API 키가 URL 쿼리에 있는 봇이 requests 예외 문자열을 그대로 alert·로그에 쓴다.
+# `name=value` 의 value 를 *** 로. 맨 `key=` 는 URL 쿼리(?key= / &key=)일 때만 — SyncEngine 로그의 `key=<봇 키>` 는 보존.
+_SECRET_RE = re.compile(
+    r"((?:[?&]key)|api[_-]?key|servicekey|apikeynm|token|secret)=[^&\s]+",
+    re.IGNORECASE,
+)
+
+
+def mask_secrets(text: str) -> str:
+    """`api_key|serviceKey|apiKeyNm|token|secret|?key|&key` = 값 → `=***`."""
+    return _SECRET_RE.sub(lambda m: f"{m.group(1)}=***", str(text))
+
+
+class MaskingFormatter(logging.Formatter):
+    """포맷 결과(예외 traceback 포함)에 mask_secrets 를 적용하는 Formatter."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return mask_secrets(super().format(record))
+
 
 _current_bot: Optional[str] = None
 _alerts: list[str] = []
@@ -66,7 +88,7 @@ def alert(msg: str, *, bot: Optional[str] = None, discord: bool = True) -> str:
     health_check 는 lastrun .out 에서 이 태그만 본다. 메시지는 한 줄(개행 제거)로.
     """
     bot = bot or _current_bot or "bot"
-    one_line = " ".join(str(msg).split())
+    one_line = mask_secrets(" ".join(str(msg).split()))
     line = f"{ALERT_TAG} {bot}: {one_line}"
     _alerts.append(line)
     try:
@@ -93,7 +115,7 @@ def _setup_logging(bot_name: str, log_dir: Path, level: str) -> tuple[logging.Lo
     log_dir.mkdir(parents=True, exist_ok=True)
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
-    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    fmt = MaskingFormatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     added: list[logging.Handler] = []
 
     # 콘솔(stdout) — Windows cp949 콘솔에서 이모지/한글 깨짐 방지
@@ -186,8 +208,11 @@ def run(
     except Exception as e:
         # 스택은 로그 파일에, stdout 엔 Traceback 도 남겨 티어 bat RETRY 조건(마지막 20줄 Traceback)에 걸리게
         log.exception(f"{bot_name} 처리되지 않은 예외")
-        traceback.print_exc()
-        alert(f"예외 종료 — {type(e).__name__}: {' '.join(str(e).split())[:300]}", bot=bot_name)
+        try:
+            print(mask_secrets(traceback.format_exc()), file=sys.stderr, end="", flush=True)
+        except Exception:
+            pass
+        alert(f"예외 종료 — {type(e).__name__}: {mask_secrets(' '.join(str(e).split()))[:300]}", bot=bot_name)
         code = 1
 
     if code == 0 and exit_on_alert and _alerts:
