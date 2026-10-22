@@ -462,8 +462,9 @@ def update_event(
         (가드 후)이면 **null 을 보내 서버 값을 지울** 필드. 기본 ()= 구 동작(빈 값은 생략 → 서버 값 잔존).
         소스에서 비운 본문·장소·링크를 미러에서도 지워야 하는 호출자만 쓴다(.216).
 
-    status_code == 404면 호출자가 fallback POST를 해야 한다.
-    update_or_create_event를 쓰면 자동 처리.
+    404 처리: 이 함수는 (False, 404)만 돌려준다. 메인·공유 토픽 쓰기에서 404 는 보통 사람이 지운
+    이벤트라 **실패로 다뤄야 한다**(W8 규칙 — 되살리지 않음, .217). 새로 만들어도 되는 경우(봇 전용 개별
+    미러 등)에만 호출자가 create 하거나 update_or_create_event 를 쓴다.
     """
     unknown = set(clear_empty) - set(CLEARABLE_FIELDS)
     if unknown:
@@ -524,6 +525,7 @@ def update_or_create_event(
     category_id: Optional[str] = None,
     rrule: Optional[str] = None,
     cache: Optional["TopicCache"] = None,
+    create_on_404: bool = True,
 ) -> Optional[str]:
     """id 있으면 update 시도, 404면 자동 처리. 없으면 바로 POST.
 
@@ -531,11 +533,15 @@ def update_or_create_event(
 
     cache가 주어지면 **2단계 fallback**:
       1) update_event(event_id) → 200 OK → 반환
-      2) 404 → cache.lookup(summary, start)로 v2 id 찾기
-         발견 시 그 id로 다시 update_event → 200 OK → 반환 (cache도 새 id로 갱신 안 함, 이미 그 id임)
-      3) cache miss or 재시도 실패 → create_event → 새 id 반환 (cache에 추가)
+      2) 404 → cache 에서 같은 (summary, start) 의 다른 id 찾기. category_id 를 주면 같은 카테고리 →
+         카테고리 없는 이벤트 순으로만 본다(공유 토픽에서 다른 멤버의 같은 제목·시각 '휴방'을 덮지 않게, .217).
+         발견 시 그 id로 다시 update_event → 200 OK → 반환
+      3) cache miss or 재시도 실패 → create_on_404 면 create_event → 새 id 반환 (cache에 추가)
 
     cache 미주어지면 **1단계 fallback**: 404 → 바로 create_event (중복 위험 있음).
+
+    create_on_404: False 면 3) 에서 create 하지 않고 None(실패) — 메인·공유 토픽처럼 404 = 사람 삭제로
+        봐야 하는 쓰기(W8 규칙). 기본 True(구 동작: 개별 미러 등 되살려도 되는 쓰기).
 
     Returns: 최종 event_id (POST 시 새 id) 또는 None.
     """
@@ -561,7 +567,11 @@ def update_or_create_event(
         # 404 분기
         if cache is not None:
             start_iso = _iso_z(start)
-            v2_id = cache.lookup(summary, start_iso)
+            if category_id:
+                v2_id = (cache.lookup(summary, start_iso, category_id=category_id, exclude=[event_id])
+                         or cache.lookup(summary, start_iso, category_id=None, exclude=[event_id]))
+            else:
+                v2_id = cache.lookup(summary, start_iso)
             if v2_id and v2_id != event_id:
                 ok2, _ = update_event(
                     v2_id,
@@ -580,6 +590,9 @@ def update_or_create_event(
                 if ok2:
                     logger.info(f"id 복구: {event_id} → {v2_id}")
                     return v2_id
+        if not create_on_404:
+            logger.warning(f"events/update {event_id} → 404, create_on_404=False → 실패(되살리지 않음)")
+            return None
         logger.warning(f"events/update {event_id} → 404, fallback to create")
     new_id = create_event(
         topic_id=topic_id,
@@ -596,7 +609,7 @@ def update_or_create_event(
         rrule=rrule,
     )
     if new_id and cache is not None:
-        cache.add(summary, _iso_z(start), new_id)
+        cache.add(summary, _iso_z(start), new_id, category_id)
     return new_id
 
 

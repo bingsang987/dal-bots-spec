@@ -256,3 +256,35 @@ def test_update_event_clear_empty_keeps_real_values(fake_dal, soon):
 def test_update_event_clear_empty_rejects_unknown_field(fake_dal):
     with pytest.raises(ValueError):
         dw.update_event("e", clear_empty=("summary",))
+
+
+# ── .217 update_or_create_event 404 정책 ─────────────────────────────────
+def _uoc(eid, soon, **kw):
+    return dw.update_or_create_event(eid, topic_id="T", summary="휴방", start=soon,
+                                     end=soon + timedelta(hours=1), **kw)
+
+
+def test_uoc_404_creates_by_default_and_not_with_flag(fake_dal, soon):
+    assert _uoc("gone", soon) in fake_dal.events                         # 구 동작
+    n = len(fake_dal.events)
+    assert _uoc("gone", soon, create_on_404=False) is None
+    assert len(fake_dal.events) == n and not fake_dal.paths("/events/create")[1:]
+
+
+def test_uoc_404_recovery_respects_category(fake_dal, soon):
+    other = fake_dal.add_event("T", "휴방", soon, categoryId="B")         # 다른 멤버의 같은 제목·시각
+    cache = TopicCache("T")
+    cache.load(days_back=1, days_forward=10)
+    new_id = _uoc("gone", soon, category_id="A", cache=cache, create_on_404=False)
+    assert new_id is None and fake_dal.events[other]["categoryId"] == "B"   # 남의 것 안 덮음
+    mine = fake_dal.add_event("T", "휴방", soon, categoryId="A")
+    cache.load(days_back=1, days_forward=10)
+    assert _uoc("gone", soon, category_id="A", cache=cache, description="<p>x</p>") == mine
+
+
+def test_uoc_404_recovery_falls_back_to_uncategorized(fake_dal, soon):
+    legacy = fake_dal.add_event("T", "휴방", soon)                        # 카테고리 없는 옛 이벤트
+    cache = TopicCache("T")
+    cache.load(days_back=1, days_forward=10)
+    assert _uoc("gone", soon, category_id="A", cache=cache) == legacy
+    assert fake_dal.events[legacy]["categoryId"] == "A"
