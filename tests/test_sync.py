@@ -537,3 +537,63 @@ def test_protect_histories_failure_holds_patch(tmp_path, fake_dal, soon):
     fake_dal.fail_histories = False
     st = eng.sync([mk("k1", "AA 변경", soon)])
     assert st.updated == 1 and fake_dal.events[eid]["summary"] == "AA 변경"
+
+
+# ── .215 PROTECTED 해시 저장 / absent 사람 이벤트 보호 ───────────────────
+def test_protected_saves_hash_so_next_run_skips_histories(tmp_path, fake_dal, soon):
+    eng = _protected_engine(tmp_path)
+    eng.sync([mk("k1", "AA", soon)])
+    eid = eng.state.get("k1").event_id
+    fake_dal.histories[eid] = [{"type": "UPDATE", "isBot": False}]
+    st = eng.sync([mk("k1", "AA 변경", soon)])
+    assert st.protected == 1 and st.updated == 0
+    assert fake_dal.events[eid]["summary"] == "AA"
+    n = len(fake_dal.paths("/topics/histories"))
+    st = eng.sync([mk("k1", "AA 변경", soon)])
+    assert st.unchanged == 1 and st.protected == 0
+    assert len(fake_dal.paths("/topics/histories")) == n        # histories 재호출 없음
+
+
+def test_protected_adopt_saves_state(tmp_path, fake_dal, soon):
+    eid = fake_dal.add_event(TOPIC, "AA", soon, categoryId="CAT")
+    fake_dal.histories[eid] = [{"type": "CREATE", "isBot": False}, {"type": "UPDATE", "isBot": False}]
+    eng = _protected_engine(tmp_path)
+    st = eng.sync([mk("k1", "AA", soon, description="<p>봇 본문</p>")])
+    assert st.protected == 1 and st.adopted == 0 and st.created == 0
+    assert eng.state.get("k1").event_id == eid                  # 다음 run 에 다시 입양·histories 하지 않음
+
+
+def test_absent_delete_default_ignores_human_history(tmp_path, fake_dal, soon):
+    eng = SyncEngine(TOPIC, tmp_path / "s.db", dry_run=False, cache_days_back=5, cache_days_forward=30)
+    eng.sync([mk("k1", "AA", soon), mk("k2", "BB", soon)])
+    eid2 = eng.state.get("k2").event_id
+    fake_dal.histories[eid2] = [{"type": "UPDATE", "isBot": False}]
+    st = eng.sync([mk("k1", "AA", soon)])
+    assert st.deleted == 1 and eid2 not in fake_dal.events       # 옵션 없으면 구 동작
+
+
+def test_protect_human_absent_keeps_human_events(tmp_path, fake_dal, soon):
+    eng = SyncEngine(TOPIC, tmp_path / "s.db", dry_run=False, cache_days_back=5, cache_days_forward=30,
+                     protect_human_absent=True)
+    eng.sync([mk(f"k{i}", f"E{i}", soon) for i in range(4)])
+    ids = {k: eng.state.get(k).event_id for k in ("k1", "k2", "k3")}
+    fake_dal.histories[ids["k1"]] = [{"type": "UPDATE", "isBot": False}]   # 사람 편집
+    fake_dal.histories[ids["k2"]] = [{"type": "CREATE", "isBot": False}]   # 사람 작성(입양)
+    fake_dal.histories[ids["k3"]] = [{"type": "UPDATE", "isBot": True}]    # 봇만
+    st = eng.sync([mk("k0", "E0", soon)])
+    assert (st.human_kept, st.deleted, st.failed) == (2, 1, 0)
+    assert ids["k1"] in fake_dal.events and ids["k2"] in fake_dal.events
+    assert ids["k3"] not in fake_dal.events
+    assert set(eng.state.all()) == {"k0"}
+    assert "human_kept=2" in st.summary()
+
+
+def test_protect_human_absent_histories_failure_holds_delete(tmp_path, fake_dal, soon):
+    eng = SyncEngine(TOPIC, tmp_path / "s.db", dry_run=False, cache_days_back=5, cache_days_forward=30,
+                     protect_human_absent=True)
+    eng.sync([mk("k1", "AA", soon), mk("k2", "BB", soon)])
+    eid2 = eng.state.get("k2").event_id
+    fake_dal.fail_histories = True
+    st = eng.sync([mk("k1", "AA", soon)])
+    assert st.failed == 1 and st.deleted == 0
+    assert eid2 in fake_dal.events and eng.state.get("k2") is not None

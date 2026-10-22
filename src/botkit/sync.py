@@ -28,6 +28,7 @@
      `source_window=(from, to)` 를 주면 그 범위 안의 state 행만 absent 후보(과거 이벤트 보호).
      absent 행의 id 를 이번 run 다른 key 가 쥐었으면(소스가 같은 일정을 새 key 로 재발급 → 입양) DELETE 없이
      state 행만 지운다(ABSENT_RELINKED, stats.relinked).
+     protect_human_absent=True 면 사람이 만들었거나 고친 이벤트도 DELETE 없이 state 행만 지운다(HUMAN_KEEP).
   5. SyncStats 반환. 실패가 있으면 호출자(또는 run 래퍼)가 alert.
 
 dry-run: dalwiki_client 가 DRY_RUN 이면 쓰기를 가짜 처리하므로 여기선 **state 를 저장하지 않는다**
@@ -286,6 +287,7 @@ class SyncStats:
     absent_skipped: Optional[str] = None   # absent 처리 전체 스킵 사유
     missing: int = 0          # state 엔 있는데 토픽 윈도우 안에 id 가 없음(사람/타봇 삭제)
     protected: int = 0        # 사람이 편집한 이벤트 → PATCH 보호
+    human_kept: int = 0       # absent 인데 사람이 만들었거나 고친 이벤트 → DELETE 대신 state 행만 제거
     failed: int = 0
     failures: list[str] = field(default_factory=list)
     dry_run: bool = False
@@ -320,6 +322,8 @@ class SyncStats:
             parts.append(f"missing={self.missing}")
         if self.protected:
             parts.append(f"protected={self.protected}")
+        if self.human_kept:
+            parts.append(f"human_kept={self.human_kept}")
         parts.append(f"fail={self.failed}")
         tag = "[DRY-RUN] " if self.dry_run else ""
         return f"{tag}sync[{self.topic_id}] " + " ".join(parts)
@@ -348,6 +352,7 @@ class SyncEngine:
         max_absent_ratio: Optional[float] = 0.3,
         max_absent: Optional[int] = None,
         alert_absent: bool = True,
+        protect_human_absent: bool = False,
     ):
         """
         Args:
@@ -371,6 +376,10 @@ class SyncEngine:
                 파서가 반쯤 깨져 소스가 일부만 돌려줄 때(0건도 예외도 아님) 대량 오삭제를 막는다.
             alert_absent: True(기본)면 absent 가 보류되거나(absent_skipped) 삭제가 1건 이상일 때
                 `botkit.run.alert` 한 줄([HEALTH-ALERT]). 봇이 따로 올리지 않던 신호를 엔진이 낸다.
+            protect_human_absent: True 면 absent 삭제 전에 histories 로 사람 CREATE/UPDATE 유무를 본다(.215).
+                사람이 만들었거나(입양) 고친 이벤트는 DELETE 대신 state 행만 지운다(`HUMAN_KEEP`, stats.human_kept —
+                이벤트는 사람 것으로 남고 봇은 더 관리하지 않음). histories 조회 실패면 그 행은 이번 run 삭제 보류
+                (failed+1, state 그대로). 삭제 후보마다 histories 1회 호출.
         """
         if absent not in ("keep", "delete"):
             raise ValueError(f"absent 정책은 keep|delete: {absent!r}")
@@ -389,6 +398,7 @@ class SyncEngine:
         self.max_absent_ratio = max_absent_ratio
         self.max_absent = max_absent
         self.alert_absent = alert_absent
+        self.protect_human_absent = protect_human_absent
         self._dry_run = dry_run
         self.state = state or SyncState(state_path, topic_id)
         self.log = log or logger
@@ -474,6 +484,8 @@ class SyncEngine:
             self._fail(stats, f"histories 조회 실패 → PATCH 보류 key={ev.key} id={event_id}")
             return False
         if human:
+            # 해시는 저장한다 — 안 하면 매 run CHANGED → histories 재호출(.215). 소스가 또 바뀌면 그때 다시 확인.
+            self._save(ev, event_id, h)
             stats.protected += 1
             self.log.info(f"PROTECTED(사람 편집) {ev.key} {event_id} → PATCH 생략")
             return True
@@ -530,6 +542,7 @@ class SyncEngine:
             self._fail(stats, f"histories 조회 실패 → PATCH 보류 key={ev.key} id={alt}")
             return True
         if human:
+            self._save(ev, alt, h)
             stats.protected += 1
             self.log.info(f"PROTECTED(사람 편집) {ev.key} {alt} → PATCH 생략")
             return True
@@ -551,6 +564,20 @@ class SyncEngine:
             stats.relinked += 1
             self.log.info(f"ABSENT_RELINKED {key} {row.event_id} {row.summary!r} → state 행만 제거(DELETE 없음)")
             return
+        if self.protect_human_absent:
+            try:
+                from dalwiki_client.histories import was_human_touched
+                human = was_human_touched(self.topic_id, row.event_id)
+            except Exception as e:
+                self._fail(stats, f"histories 조회 실패 → absent 삭제 보류 key={key} id={row.event_id}: {e}")
+                return
+            if human:
+                if not self.dry_run:
+                    self.state.delete(key)
+                stats.human_kept += 1
+                self.log.info(f"HUMAN_KEEP {key} {row.event_id} {row.summary!r} — 사람 작성/편집 이벤트, "
+                              f"DELETE 대신 state 행만 제거")
+                return
         ok, sc = dw.delete_event_status(row.event_id)
         # 404 = 이미 없는 이벤트 → 삭제된 걸로 간주(start_iso 없는 이관 행도, .70). 그 외 실패는 캐시로 보조 판정.
         gone = ok or sc == 404
