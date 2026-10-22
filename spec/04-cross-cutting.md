@@ -84,16 +84,33 @@ else:
 
 ## 실행 스케줄
 
-Windows 작업 스케줄러가 `.bat` 파일을 주기 실행한다.
+Windows 작업 스케줄러가 **티어 bat**(`C:\Users\gamer\bot_scheduler\run_tier_*.bat`)을 돌리고, 티어가 봇 폴더의 bat을 `call :RUN <폴더> <bat>`으로 하나씩 순서대로 부른다. 봇별 단독 작업은 두지 않는다(2026-10-15 `dalbot_*`·convini 단독 작업 삭제). 정본은 `bot_scheduler\README.txt`, 봇별 티어·라벨은 [README 봇 목록](../README.md#현재-운영-중인-봇-목록).
 
-| 파일명 패턴 | 주기 예시 |
-|------------|----------|
-| `run.bat` | 매일 1회 (새벽 시간대) |
-| `매일_run.bat` | 매일 |
-| `주1회_*.bat` | 매주 1회 |
-| `주2회_*.bat` | 매주 2회 |
-| `dry_run.bat` | 수동 테스트용 |
-| `first_run.bat` | 초기 설치 시 1회 |
+| 작업 | 시각 | 내용 |
+|------|------|------|
+| `dalwiki bots - 2x daily tier` | 매일 11:00·19:30 | VOD/미러·Discord catchup·티켓류 |
+| `dalwiki bots - DAILY tier` | 매일 11:15 | 대부분의 소스 봇(+시즌 축구) |
+| `dalwiki bots - WEEKLY tier` | 월 13:00 | 느린 소스·주간 정리(reconcile, expire, translate) |
+| `dalwiki bots - HOURLY tier` | 매시 정각 | aesther `sync_hourly`, streamersyncbot (깨우기 없음) |
+| `dalwiki bots - health check` | 매일 21:00 | `health_check.py` → Discord #헬스체크 |
+| `dalwiki-agent - *` | 08:00 등 | 데이터 헬스(일간, 일 09:00 주간 리포트)·collab·fmkorea·signals |
+
+봇 bat 규약: 본문 ASCII, 첫 줄 `python C:\Users\gamer\bot_dashboard\track.py <라벨>`, 끝에 `pause`(티어가 `<nul`로 넘김). **티어가 부르는 bat 파일명은 바꾸지 않는다** — 바꾸면 티어 bat(관제탑 관리)도 같이 고쳐야 한다. `dry_run.bat` 등 수동용 bat은 자유.
+
+티어 `:RUN` 동작: 출력 → `bot_scheduler\lastrun_<폴더>__<bat이름>.out`. `crash_check.py`(= `health_check._real_crash`)가 치명이라고 보면 **1회만** 재실행 — 치명 = `ModuleNotFoundError`, 또는 logging 모듈이 아닌 봇 코드 Traceback으로 **run이 끝난** 경우(마지막 의미 있는 6줄). 잡혀서 로그만 찍고 완료까지 간 예외는 재실행하지 않는다.
+
+### 라이브 실행 금지 시간대
+
+수동으로 봇을 라이브(쓰기) 실행할 때 티어와 겹치면 같은 state/토픽에 두 프로세스가 쓴다(중복 생성·state 경합). 다음 시간대에는 해당 봇을 수동 실행하지 않는다.
+
+| 시간대 | 대상 |
+|--------|------|
+| 매시 정각 ±5분 | aesthervodbot, streamersyncbot (HOURLY) |
+| 11:00·19:30 ±10분 | 2x 티어 봇 전부(특히 chzzk·stellive·aesther·cluez) |
+| 11:15 ~ DAILY 티어 종료(보통 ~11:50) | DAILY 티어 봇 |
+| 월 13:00 ~ WEEKLY 티어 종료 | WEEKLY 티어 봇(stellive reconcile 포함) |
+
+dry-run은 쓰기가 없으므로 언제든 가능(state를 임시 사본으로 쓰지 않는 옛 봇은 dry-run도 피한다). 실행 전 `Get-ScheduledTask -TaskName "dalwiki*"`의 State가 Running이 아닌지 확인.
 
 ---
 
@@ -130,7 +147,10 @@ health_check는 각 봇 run의 stdout(`lastrun_*.out`)에서 **`[HEALTH-ALERT]` 
 
 - 태그는 정확히 `[HEALTH-ALERT]`. `[ALERT]`·`[WARN]` 등 변형 금지(daisobot·theatergoodsbot·musicshowbot 사례 — 정규식에 안 걸림).
 - stdout에 flush 출력(파일 로그에만 쓰면 health_check가 못 본다). `botkit.run.alert(msg)`가 이 형식을 보장한다.
-- 한 run에 여러 번 가능. alert만 있고 예외가 없으면 exit 0(처리된 저하). 티어 bat의 RETRY는 "마지막 20줄에 Traceback"으로만 판단한다.
+- 한 run에 여러 번 가능. alert만 있고 예외가 없으면 exit 0(처리된 저하) — 티어는 재실행하지 않고 health check만 경보한다. 재실행은 위 '치명' 판정(crash_check)일 때 1회뿐.
+- health check는 최근 28시간 안의 `lastrun_*.out`만 본다. 정규식은 구형 `[ALERT]`도 잡지만 새 코드는 `[HEALTH-ALERT]`만 쓴다.
+- `!! …`·`[WARN]`·`print("에러")` 같은 자체 표기는 감지되지 않는다(kboticketbot `!! KBO 경기 DB 없음` 무감지 사례, 2026-10-22).
+- 새 티어 bat/라벨을 넣으면 `health_check.py`의 `DAILY_BOTS`/`WEEKLY_BOTS`에 라벨을 추가해야 STOPPED 감시가 된다(관제탑 작업, 절차는 `bot_scheduler\README.txt`).
 - 시즌 종료 등 **예상된 0건**은 alert 대상이 아니다 — 비시즌 가드로 run 자체를 스킵하거나 `topics.yaml seasonal`로 제외.
 
 ---
@@ -141,12 +161,24 @@ health_check는 각 봇 run의 stdout(`lastrun_*.out`)에서 **`[HEALTH-ALERT]` 
 
 1. **쓰기는 전부 `dalwiki_client` 경유.** 봇 폴더에 `dalwiki.py`/`dalwiki_client.py` 래퍼를 두지 않는다(5벌 복제·깨진 버전 사고).
 2. **동기화는 `SyncEngine.sync(events, source_complete=…, source_window=…)` 한 번.** 봇은 `Event` 목록만 만든다. key는 run이 바뀌어도 같은 안정적 자연 키.
-3. **소멸(absent) 정책**: 기본 `delete`. 단 소스 0건·일부 실패 run은 엔진이 자동으로 absent를 스킵한다. "앞으로 N일"만 긁는 봇은 `source_window`를 꼭 준다.
-4. **state는 쓰기 성공 후에만.** dry-run은 state·커서를 저장하지 않는다.
-5. **LLM**: 모델 ID는 `botkit.llm.HAIKU/SONNET`만. 응답 파싱은 `llm_json`(탐욕 regex 금지). `LLMUnavailable`은 잡아서 커서 정지 + alert, `LLMParseError`는 그 입력만 재시도 큐.
-6. **Discord**: `botkit.discord.catchup`. 커서는 메시지 처리 성공 뒤에만 전진. 데몬이 아니라 `run_catchup_once`로 티어에서 1회 실행.
-7. **실행**: `run(bot_name, main_fn)`으로 감싼다. `--dry-run` 표준. `track.py` 호출은 기존처럼 bat에 둔다(래퍼가 대체하지 않음).
-8. 이벤트 필드: `categoryId` 항상 명시, summary에 `[카테고리]` prefix 금지, description 링크는 `target="_blank" rel="noopener noreferrer"`, **본문에 출처 표기 금지**(원본은 `link` 칸), 종일 이벤트는 00:00~23:59:59 KST(start=end 금지).
+3. **소멸(absent) 정책** — 소스가 더 이상 말하지 않는 key:
+   - `absent="delete"`(기본, 사용자 확정) | `"keep"`. 소스 0건이거나 `source_complete=False`(소스 일부 실패)면 엔진이 absent 판정 전체를 스킵(`stats.absent_skipped`에 사유).
+   - **`source_window=(from, to)`**: 그 범위 안 start를 가진 state 행만 absent 후보. "앞으로 N일"만 긁는 봇이 이걸 안 주면 과거 이벤트가 전부 absent로 지워진다. `absent_filter=`로 카테고리 한정 등 추가 조건.
+   - 창 밖 state 행·이벤트는 그대로 남는다. 옛 봇이 창 밖에 남긴 고아/중복은 엔진이 못 지우므로 1회성 정리로 처리(사용자 정책: 삭제, state에 있는 1건은 보존).
+4. **누락(missing) 정책 `on_missing`** — state엔 있는데 토픽 캐시 창 안에서 id가 사라진 이벤트(사람·다른 봇이 삭제):
+   - `"ignore"`(기본): 사람이 지운 자리를 다시 만들지 않는다. `"recreate"`: 다시 만든다. `"forget"`: state에서만 지운다.
+   - 캐시 창(`cache_days_back=60`·`cache_days_forward=400`) 밖은 missing 판정을 하지 않는다.
+   - `protect_human_edits=True`면 PATCH 전 histories로 사람 수정 여부를 보고 덮지 않는다(호출 비용 있음, 미러 봇용).
+5. **입양(adopt)**: NEW key인데 토픽에 같은 (summary, start)가 있으면 그 id를 입양해 update(중복 생성 방지, state 이관). 공유 토픽에서 카테고리마다 같은 제목·시각이 흔하면 `adopt_scope="category"`(같은 카테고리 + 다른 key가 안 쥔 id만). 같은 토픽 엔진 여러 개는 미리 strict 로드한 `cache=`를 공유.
+6. **state는 쓰기 성공 후에만.** dry-run은 state·커서를 저장하지 않는다.
+7. **LLM**: 모델 ID는 `botkit.llm.HAIKU/SONNET`만. 응답 파싱은 `llm_json`(탐욕 regex 금지). `LLMUnavailable`은 잡아서 커서 정지 + alert, `LLMParseError`는 그 입력만 재시도 큐.
+8. **Discord**: `botkit.discord.catchup`. 커서는 메시지 처리 성공 뒤에만 전진. 데몬이 아니라 `run_catchup_once`로 티어에서 1회 실행.
+9. **실행**: `run(bot_name, main_fn)`으로 감싼다. `--dry-run` 표준. `track.py` 호출은 기존처럼 bat에 둔다(래퍼가 대체하지 않음). 수동 라이브 실행은 위 '라이브 실행 금지 시간대'를 피한다.
+10. **VOD/미러 계열(`botkit.vod`)** — chzzk·stellive·aesther·cluez는 per-day reconciliation을 봇이 직접 하므로 SyncEngine 대신 부품을 쓴다:
+    - `fetch_events_chunked(topic, from_ms, to_ms)` → `(events, complete)`. 청크 하나라도 실패면 `complete=False` — 그 run은 **prune·DAY_WIPE·orphan 생성·MissingGuard.sweep 금지**(기존 매핑 PATCH만 허용) + alert.
+    - **`MissingGuard(conn, scope)`**(옛 TombstoneStore 대체): 봇이 매핑해 둔 이벤트가 토픽에서 사라졌으면 = 사람이 지운 자리 → 그 매핑 키로 재생성하지 않는다. `sweep(mapping, present_ids)`는 **완전 조회(complete=True)일 때만**, 조회 창 밖 매핑은 빼고 넘긴다. 다시 보이면 기록 자동 해제, 소스에서 키가 사라지면 `forget(key)`. dry-run이면 메모리에만 기록.
+    - `get_description`/`hydrate_descriptions`가 실패한 이벤트(`None`/`_desc_failed`)는 그 run에서 건드리지 않는다. VOD 블록은 `build_vod_block`/`append_vod`(rel `noopener noreferrer ugc`, 같은 videoNo면 그대로 → 멱등).
+11. 이벤트 필드: `categoryId` 항상 명시, summary에 `[카테고리]` prefix 금지, description 링크는 `target="_blank" rel="noopener noreferrer"`, **본문에 출처 표기 금지**(원본은 `link` 칸), 종일 이벤트는 00:00~23:59:59 KST(start=end 금지).
 
 ---
 

@@ -97,32 +97,89 @@ if __name__ == "__main__":
 
 ## 현재 운영 중인 봇 목록
 
-| 봇 이름 | 대상 소스 | 캘린더 |
-|---------|----------|--------|
-| animebot | AniList GraphQL | 애니 방영 일정 |
-| KBObot | koreabaseball.com hidden API | KBO 야구 |
-| chzzkvodbot | Naver Chzzk VOD API | 스트리머별 VOD |
-| aesthervodbot | Chzzk + 메인 캘린더 | AESTHER 4명 |
-| netflixbox | 내부 데이터 | Netflix KR |
-| figurebot | 6개 제조사 웹사이트 스크래핑 | 피규어 발매 |
-| doujin_bot | comicw.net | 동인 행사 |
-| album_bot | MusicBrainz/Melon/iTunes/Deezer | 앨범 발매 |
-| festivalbot | 한국관광공사 TourAPI | 문화 축제 |
-| laftelbot | api.laftel.net | 라프텔 스트리밍 |
-| runbot | gorunning/marathongo/roadrun | 마라톤/달리기 |
-| ticketbot | 인터파크/YES24/멜론 | 티켓 오픈 |
-| gamingschedulebot | Epic/PS Plus/GOG | 무료 게임 |
-| convinibot | CU/GS25 보도자료 + 뉴스와이어 | 편의점 신상품 |
-| megasale_bot | Amazon/AliExpress/iHerb 등 | 해외직구 세일 |
-| pokemonTCGbot | 공식 홈페이지 스크래핑 | 포켓몬 TCG |
-| ewcbot | Liquipedia + start.gg | e스포츠 월드컵 |
-| worldcupbot | football-data.org | FIFA 월드컵 |
-| koreafootballbot | KFA + football-data.org | 한국 축구 |
-| koreansoccerguysbot | football-data.org + ESPN | 해외파 축구 |
-| onlinegamebot | 11개 PC 게임 공지 API/크롤링 | 온라인 게임 |
-| housingbot | 청약Home | 청약 일정 |
-| museumbot | KCISA + SeMA + PKM | 박물관·미술관 |
-| collabcafebot | 서브컬쳐 팝업 소스 | 콜라보 카페 |
-| OTTbot | JustWatch API | OTT 콘텐츠 |
-| lckteambot | Liquipedia | LCK 팀별 일정 |
-| stockmarketBOT | 증권 API | 주식 이벤트 |
+2026-10-22(W5) 기준, 코드·티어 bat·`dalwiki-agent/topics.yaml`에서 확인한 값. 봇 폴더는 `C:\Users\gamer\Documents\<폴더>`, 상태 경로는 그 폴더 기준. 티어 시각·실행 규약은 `C:\Users\gamer\bot_scheduler\README.txt`. 라벨 = bat의 `track.py <라벨>`(대시보드·health_check 키).
+기반: **SE** = `botkit.sync.SyncEngine`, **vod** = `botkit.vod` 헬퍼 + 봇 자체 reconciliation, **dc** = `botkit.discord` catchup, **llm** = `botkit.llm`, **client** = `dalwiki_client`만, **자체** = 봇 폴더의 자체 래퍼(내부는 dalwiki_client)·카테고리 API 직접 호출.
+
+### 2x 티어 (매일 11:00·19:30) + HOURLY
+
+| 폴더 (bat) | 라벨 | 소스 | 토픽 | 기반 | 상태 경로 |
+|---|---|---|---|---|---|
+| chzzkvodbot (run_sched) | chzzkvodbot | 치지직 API(VOD 매칭), 개별 캘린더 → 메인 미러 | 메인 `v1c2BaT1zEvn` + 스트리머 개별 16 | vod | `chzzkvodbot.db` |
+| stellivebot (run · 주간 run_reconcile) | stellivebot · stellivebot-reconcile | stellight.fans API + 치지직 VOD | 멤버 개별 11 + 메인(멤버 카테고리) + 그룹 `WnIxykk2aL9f` | vod | `stellivebot.db` |
+| aesthervodbot (run · HOURLY sync_hourly) | aesthervodbot | 메인 토픽 미러 + 치지직 VOD | 그룹 `TdjOJNFqzsmf` + 개별 4 | vod | `aesthervodbot.db` |
+| cluezvodbot (run) | cluezvodbot | 메인 토픽 미러 + 치지직 VOD | 그룹 `3ZsfB6vOXpKx` + 개별 2 | vod | `cluezvodbot.db` |
+| streamersyncbot (HOURLY run) | streamersyncbot | 메인 토픽 HONEYZ·ACAXIA 카테고리 미러 | `WhPckbBXTTsv`, `X6gXMTQFuVIr` | SE(adopt_scope=category) | `state/streamersync.db` |
+| gachabot (run_catchup) | gachabot | Discord 게임 채널(TweetShift) + Haiku | 게임 12 + 통합 `IbM473NkLrAE` | SE·dc·llm | `state/gachabot.db` |
+| qwerbot (run_catchup · run_redvelvet · run_rescene · 주간 run_namu) | qwerbot · redvelvet · rescene · namu-supplement | Discord(TweetShift) + Haiku, 보조 나무위키 | `aShgvAZWcd7B` QWER, `yTOM32lVDKJ5` 레드벨벳, `4k-F0Htz1dl6` 리센느 | SE·dc·llm | `state/{group}.db` |
+| berriz-bots (run_all) | berriz-ive · berriz-kiiikiii | Berriz 공개 캘린더 API | `ahGUO5dJTIOH` IVE, `ovRE7nQSAlX2` KiiiKiii | SE | `state/{artist}.db` |
+| timetree-bots (run_seventeen) | seventeen | TimeTree 공개 캘린더 + Haiku 분류 | `rM65HqLLyJc1` 세븐틴 | SE·llm | `state/seventeen.db` |
+| dcbot (run_rescene) | dcbot-rescene | 디시 마이너갤 일정표 이미지 + Sonnet 비전 | `4k-F0Htz1dl6` 리센느 | SE·llm(검수 후 `--apply`) | `state/rescene1_sync.db`, 대기열 `state/rescene1_pending.jsonl` |
+| lckteambot (run_once) | lckteambot | Leaguepedia Cargo + Discord 팀 SNS + LLM | 팀 10 + 통합 `BzGUT0wOWsgx` | SE·dc·llm | `state/lckteambot.db` |
+| msibot (run_msi_bot · run_worlds_bot) | msibot · worldsbot | 네이버 e스포츠 API | `nTCdDehWCBKq` MSI, `U20Zns8YfaAc` 롤드컵 | 자체 | `msi_state.json`, `*_events_db.json` |
+| ticketbot (run) | ticketbot | 인터파크·YES24·멜론 티켓 오픈 공지 | `46z005GBfOYB` 콘서트, `MTG8oh05P0iv` 뮤지컬·연극 | SE | `state/ticketbot.db` |
+| canceltickbot (run) | canceltickbot | ticketbot 스크래퍼 + 인터파크 잔여석 + Haiku | `eDQQHdy1bN4d` 취켓팅 | SE·llm | `state/canceltick.db` |
+| daisobot (run) | daisobot | 다이소몰 사전예약 기획전 API | `L8fI7uBj-6jZ` 다이소 오픈런 | client | `state.json` |
+| theatergoodsbot (run) | theatergoodsbot | CGV·롯데시네마·메가박스 특전 페이지 | `VBMiAMPv37Oy` 극장 특전 | client | `state.json` |
+| PLBOT (run_once) | PLBOT | football-data.org | 빅6 팀 6 | SE | `state.db` |
+
+### DAILY 티어 (매일 11:15)
+
+| 폴더 (bat) | 라벨 | 소스 | 토픽 | 기반 | 상태 경로 |
+|---|---|---|---|---|---|
+| KBObot (run_kbo_bot) | KBObot | koreabaseball.com 내부 API | 리그 `vvSHkOrwL1Rh` + 구단 10 | SE | `kbo_state.db` |
+| kboticketbot (run_sched) | kboticketbot | KBObot 경기 목록 역산 | `VvaQUi6Q48Ab` KBO 티켓 오픈 | client | `kboticket.db` — ⚠ 입력 `KBObot/kbo_db.json`이 W2 후 없음(후속 이슈) |
+| lckbot (run_lck_bot) | lckbot | Leaguepedia Cargo | `EZuS4T1OGjb2` LCK | SE | `state/lckbot.db` |
+| onlinegamebot (run) | onlinegamebot | 게임 9종 공지 크롤·넥슨 Open API + Haiku | 게임 9 + 통합 `eznOF4IYU9ox` | SE·llm | `state/state.db` |
+| album_bot (run) | album_bot | 멜론·iTunes·Deezer·MusicBrainz·Metacritic·나무위키 | `9LVm3HmCUSnN` 앨범 발매 | 자체 | `releases.db` |
+| netflixbox (run_netflixbot) | netflixbot | uNoGS + JustWatch + TMDB | `VOOirIQJ3hhQ` 넷플릭스 | SE | `state/netflixbot.db` |
+| dramabot (run_drama_bot) | dramabot | TMDB discover/tv | `excH0WFng4WM` 드라마·예능 신작 | 자체 | `drama_state.json`, `drama_db.json` |
+| kdramabot (run_daily) | kdramabot | DAUM EPG 스냅샷 + programs.yaml + OTT | `K4V9xKVLkSxS` 한국 드라마 + 예능 3 | 자체 | `state.json`, `kdrama_db.json` |
+| animebot (run) | animebot | 나무위키 분기 애니 분류·문서 | `Fhumn3q1yXWA` 애니메이션 | client | `namu_anime.db` |
+| stockmarketBOT (run_kr · run_us) | stockmarket-kr · stockmarket-us | OpenDART·KIND / Alpha Vantage·FMP·Nasdaq | `Z8pPQhuIE6HW` 한국 증시, `mu7Xb68e2UrP` 미국 증시 | SE | `state/stockmarket.db` |
+| econcalbot (run_econ_bot) | econcalbot | Nasdaq 경제캘린더(High) | `R6_y96_olqnS` 경제지표 | SE | `state/econcalbot.db` |
+| tumblbugbot (run_apply) | tumblbugbot | 텀블벅 API | `3sEDrwwRTo75` 텀블벅 마감 | SE | `state/tumblbug.db` |
+| housingbot (run_scheduled) | housingbot | 청약Home Open API | `KiHFceW2e9N8` 청약 | SE | `state/housingbot.db` |
+| convinibot (run) | convinibot | BGF 보도자료·뉴스와이어·Google News + Haiku | `WZ8xOfyIJxLz` 편의점 신상 | SE·llm | `state.db` |
+| moviebot (run) | moviebot | 메가박스 개봉예정 API | `EsGKyUpMrKVm` 영화 개봉 | client | `movie_bot.db` |
+| gamepassbot (run) | gamepassbot | news.xbox.com 게임패스 글 + LLM | `yBU8HbSdzAGR` XBOX 게임패스 | 자체 | `data/state.db` |
+| collabcafebot (run) | collabcafebot | Discord(TweetShift) + 팝가·데이포유 + Haiku | `wyJcQePq9IFq` 서브컬쳐 팝업 | SE·dc·llm | `state.db`, `state/cursors.db` |
+| naehanbot (run) | naehanbot | 나무위키 '내한 공연/YYYY년' | `8yjCWNnLFgVj` 내한 공연 | 자체 | `naehanbot.db` |
+| mnetplusbot (run_apply) | mnetplusbot | Mnet Plus 아티스트 캘린더 | `4k-F0Htz1dl6` 리센느 | SE | `state/mnetplus.db` |
+| laftelbot (run_new · 주간 run_expire) | laftelbot-new · laftelbot-expire | 라프텔 API | `6X7pfGtRIOHw` 라프텔 | SE | `state/laftel.db` |
+| ipobot (run_apply) | ipobot | 38커뮤니케이션 공모주 | `O2gLoYrjMM7e` 공모주 | SE | `state/ipobot.db` |
+| youthpolicybot (run_apply) | youthpolicybot | 온통청년 | `LvzVxU_W6tDi` 청년 정책 | SE | `state/youth.db` |
+| campingcalbot (run_sched) | campingcalbot | 숲나들e·KNPS 반복 규칙 | `yPNcS1cyLfj0` 휴양림·야영장 예약 | SE | `state/campingcalbot.db` |
+| couponcalbot (run_sched) | couponcalbot | 정책브리핑 보도자료 + Haiku | `33wyyta_Fqdd` 소비쿠폰·할인권 | SE·llm | `state/couponcalbot.db` |
+| figurebot (run_scrape · 주간 run_translate·run_delays) | figurebot-scrape · figurebot-translate · figurebot-delay | 굿스마일·알터·카이요도 등 공홈 + LLM 번역 | `N55OnVjoGg7N` 피규어 | SE·llm | `state/figurebot.db` |
+| koreafootballbot (run_recent) [시즌] | koreafootballbot | KFA 월별 일정 | `IPCj1xcOK2AL` 국가대표 | SE | `state/koreafootballbot.db` |
+| koreansoccerguysbot (run_full) [시즌] | overseas_football_bot | football-data.org + ESPN | `ibVjqypMr9mn` 해외파 선수 | 자체 | `state/state.json` |
+
+### WEEKLY 티어 (월 13:00)
+
+| 폴더 (bat) | 라벨 | 소스 | 토픽 | 기반 | 상태 경로 |
+|---|---|---|---|---|---|
+| festivalbot (run) | festivalbot | TourAPI + Haiku | `IZdp3T7oB48s` 한국 축제 | SE·llm | `state.db` |
+| museum_bot (run_update) | museumbot | KCISA·SeMA·PKM | `ZDF49ygIhO15` 전시회 | SE | `state.db` |
+| doujin_bot (run) | doujin_bot | comicw.net 행사 게시판 | `akEt1KVzmve7` 동인 행사 | SE | `state.db` |
+| runbot (run) | runbot | 마라톤고·고러닝·로드런 | `MrblvLt48lWt` 마라톤 | 자체 | `races.db` |
+| megasale_bot (run) | megasale_bot | `seed_events.json` 시드 + Haiku | `doMQDPF5gu5l` 직구 메가세일 | SE·llm | `state/megasale.db` |
+| fgcbot (run_apply) | fgcbot | start.gg + BNE·CPT·STL | `VBxX9AHcxhiO` 철권, `aG892YPuMZXD` 스파6 | 자체 | `data/state.json` |
+| gamingschedulebot (run_freegame) | gamingschedulebot | 에픽·PS Plus·GamerPower(GOG)·STOVE | `kdWPdGk04_gH` 무료게임 | 자체 | `data/seen.db` |
+| taxcalbot (run_sched) | taxcalbot | `seed.py` 정적 규칙 | `YXJVydUEl9m6` 세금 신고·납부 | SE | `state/taxcalbot.db` |
+
+(stellivebot reconcile·qwerbot namu·figurebot translate/delays·laftelbot expire도 WEEKLY — 위 표의 해당 행 참조.)
+
+`topics.yaml`에 아직 없는 토픽: `WnIxykk2aL9f`(stellive 그룹), `4k-F0Htz1dl6`(리센느, qwer·mnetplus·dcbot 공유), `L8fI7uBj-6jZ`, `R6_y96_olqnS`, `LvzVxU_W6tDi`, `33wyyta_Fqdd`, `kdWPdGk04_gH`.
+
+### 아카이브 (`C:\Users\gamer\Documents\_archive_bots`, 티어에서 빠짐)
+
+| 폴더 | 무엇이었나 |
+|---|---|
+| asiangamesbot | 2026 아이치·나고야 아시안게임(본체 + e스포츠, 반자동). 대회 종료 10-04 → 2026-10-15 은퇴 |
+| ewcbot | E스포츠 월드컵 2026 종목별 Liquipedia 봇. 시즌 작업 2026-08-24 만료 |
+| holidaytrafficbot | 설·추석 승차권/버스 예매 일정(반자동, 연 2회) |
+| musicshowbot | 음악방송 3사 출연진 게시물 → 라인업 캘린더 |
+| pointfarm_sports_bot | dal.wiki 봇 아님 — pointfarm 예측 마켓 생성·정산(Supabase) |
+| worldcupbot | 2026 FIFA 월드컵 104경기 단일 토픽. 대회 종료 07-19 → 은퇴 |
+
+이전 목록에 있던 pokemonTCGbot·OTTbot은 현재 폴더·티어 모두 없음.
