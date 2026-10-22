@@ -201,3 +201,28 @@ def test_categories_tree_failure_raises(monkeypatch):
     import pytest as _pt
     with _pt.raises(C.DalWikiError):
         C.categories_tree("T")
+
+
+def test_list_events_splits_windows_longer_than_50_days(monkeypatch):
+    """from~to 가 50일을 넘으면 49일 조각으로 나눠 호출하고 id 로 합친다(dalbots-bmi.223)."""
+    from dalwiki_client import client as C
+    calls = []
+
+    def fake_post(path, body, retries=3):
+        calls.append((body["from"], body["to"]))
+        n = len(calls)
+        return {"status": 200, "body": [{"id": f"e{n}", "summary": "x", "start": body["from"]},
+                                        {"id": "shared", "summary": "y", "start": body["from"]}]}
+    monkeypatch.setattr(C, "_post", fake_post)
+    out = C.list_events("T", from_="2025-06-01T00:00:00.000Z", to="2025-09-30T00:00:00.000Z", take=1000)
+    assert len(calls) == 3                                   # 121일 → 49+49+23
+    assert calls[0][0] == "2025-06-01T00:00:00.000Z" and calls[-1][1] == "2025-09-30T00:00:00.000Z"
+    assert sorted(e["id"] for e in out) == ["e1", "e2", "e3", "shared"]   # id 중복 제거
+
+
+def test_list_events_short_window_single_call(monkeypatch):
+    from dalwiki_client import client as C
+    calls = []
+    monkeypatch.setattr(C, "_post", lambda path, body, retries=3: (calls.append(1), {"status": 200, "body": []})[1])
+    C.list_events("T", from_="2025-06-01T00:00:00.000Z", to="2025-07-15T00:00:00.000Z")
+    assert len(calls) == 1

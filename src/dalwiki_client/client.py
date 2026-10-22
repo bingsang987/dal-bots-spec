@@ -34,6 +34,8 @@ DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 
 # events/list take 상한 (dal.wiki API v2)
 MAX_TAKE = 1000
+# events/list from~to 창 상한(서버 'window must be ≤ 50 days'). 긴 창은 이 단위로 자동 분할.
+MAX_WINDOW_DAYS = 49
 
 # DRY_RUN 중에도 실제로 호출하는 조회 전용 엔드포인트(pointfarm-cb4).
 # 드라이런에서 가짜 id/빈 목록을 돌려주면 "중복 생성/삭제 없음"을 검증할 수 없다.
@@ -317,6 +319,23 @@ def list_events(
         body["perDateLimit"] = per_date_limit
     if tz:
         body["tz"] = tz
+
+    # 서버 제약: window ≤ 50일. 더 긴 from~to 는 49일 조각으로 나눠 호출하고 id 로 합친다(dalbots-bmi.223).
+    if from_iso and to_iso and _depth == 0:
+        from datetime import timedelta as _td
+        f_dt = datetime.fromisoformat(from_iso.replace("Z", "+00:00"))
+        t_dt = datetime.fromisoformat(to_iso.replace("Z", "+00:00"))
+        if t_dt - f_dt > _td(days=MAX_WINDOW_DAYS):
+            merged: dict[str, dict] = {}
+            cur = f_dt
+            while cur < t_dt:
+                nxt = min(cur + _td(days=MAX_WINDOW_DAYS), t_dt)
+                for e in list_events(topic_id, cur, nxt, take, category_ids, per_date_limit, tz,
+                                     _depth=1, _max_depth=_max_depth, raise_on_fail=raise_on_fail):
+                    if e.get("id"):
+                        merged[e["id"]] = e
+                cur = nxt
+            return list(merged.values())
 
     resp = _post("/events/list", body)
     if not resp or resp.get("status") not in (200, 201):
