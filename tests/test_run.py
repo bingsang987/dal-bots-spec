@@ -139,3 +139,33 @@ def test_mask_secrets_covers_crtfc_and_auth_keys():
     out = mask_secrets(s)
     assert "abc123" not in out and "zz" not in out and "=q" not in out and "p1" not in out
     assert "crtfc_key=***" in out and "corp=1" in out
+
+
+def test_alert_single_console_line_even_with_bot_stdout_handler(capsys, monkeypatch):
+    # 봇이 basicConfig 등으로 stdout 콘솔 핸들러를 붙여도 alert 는 콘솔에 한 줄(.219), 파일 로그엔 남는다
+    import logging
+    import sys
+    import importlib
+    R = importlib.import_module("botkit.run")
+    monkeypatch.setattr(R, "_current_bot", "testbot")
+    root = logging.getLogger()
+    console = logging.StreamHandler(sys.stdout)
+    records = []
+
+    class _Keep(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    keep = _Keep()
+    root.addHandler(console)
+    root.addHandler(keep)
+    try:
+        R.alert("두 줄 금지")
+        logging.getLogger("x").error("일반 에러는 콘솔에 그대로")
+    finally:
+        root.removeHandler(console)
+        root.removeHandler(keep)
+    out = capsys.readouterr().out
+    assert out.count("[HEALTH-ALERT] testbot: 두 줄 금지") == 1
+    assert "일반 에러는 콘솔에 그대로" in out
+    assert any("[HEALTH-ALERT] testbot: 두 줄 금지" in m for m in records)

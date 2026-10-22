@@ -173,8 +173,29 @@ def test_missing_guard_clears_when_present_again(conn, fake_dal):
 def test_missing_guard_dry_run_writes_nothing(conn, fake_dal):
     g = vod.MissingGuard(conn, scope="s", dry_run=True)
     assert g.sweep({"k": "e"}, present_ids=set()) == ["k"]
-    assert g.is_missing("k")
-    assert conn.execute("SELECT COUNT(*) FROM missing_keys").fetchone()[0] == 0
+    assert g.is_missing("k") and g.keys() == ["k"]
+    # dry-run 은 테이블도 만들지 않는다(.219)
+    assert conn.execute("SELECT 1 FROM sqlite_master WHERE name='missing_keys'").fetchone() is None
+
+
+def test_missing_guard_dry_run_reads_existing_table(conn, fake_dal):
+    vod.MissingGuard(conn, scope="s").sweep({"old": "gone"}, present_ids=set(), verify=False)
+    g = vod.MissingGuard(conn, scope="s", dry_run=True)
+    assert g.is_missing("old") and g.keys() == ["old"]
+
+
+def test_missing_guard_init_does_not_commit_callers_transaction(tmp_path):
+    import sqlite3
+    path = tmp_path / "bot.db"
+    c = sqlite3.connect(path)
+    c.execute("CREATE TABLE t (x)")
+    c.commit()
+    for dry in (True, False):
+        c.execute("INSERT INTO t VALUES (1)")                    # 호출자의 미커밋 쓰기
+        vod.MissingGuard(c, scope="s", dry_run=dry)
+        assert c.in_transaction
+        c.rollback()
+        assert c.execute("SELECT COUNT(*) FROM t").fetchone()[0] == 0   # executescript 였으면 커밋돼 1
 
 
 def test_missing_guard_verify_skips_live_event_and_alerts_new(conn, fake_dal, soon, capsys):

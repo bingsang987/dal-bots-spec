@@ -18,6 +18,7 @@
   - 처리되지 않은 예외 → 로그 + `[HEALTH-ALERT] <bot>: 예외 종료 …` + exit 1
   - 시크릿 마스킹: alert·예외 메시지·traceback·로그 포맷터에서 `api_key=…`/`serviceKey=…`/`token=…` 등 → `=***`
   - `alert(msg)`: `[HEALTH-ALERT] <bot>: msg` 를 stdout 에 flush 출력 + logger.error (+ `DALWIKI_DISCORD_WEBHOOK_URL` 웹훅 있으면 `dalwiki_client.discord_notify.send_alert`)
+    logger.error 레코드는 콘솔(stdout/stderr) 핸들러에선 걸러 파일 로그에만 남는다 — 콘솔·lastrun .out 에 한 줄만.
   - main_fn 이 int 를 돌려주면 그걸 exit code 로 쓴다
 
 규약(health_check 가 보는 것은 `[HEALTH-ALERT]` 한 줄):
@@ -63,6 +64,34 @@ class MaskingFormatter(logging.Formatter):
         return mask_secrets(super().format(record))
 
 
+class _SkipAlertRecords(logging.Filter):
+    """alert() 가 logger.error 로 남긴 레코드를 거른다(그 줄은 이미 print 로 stdout 에 나갔다)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not getattr(record, "botkit_alert", False)
+
+
+_SKIP_ALERT = _SkipAlertRecords()
+
+
+def _mute_console_dup(log: logging.Logger) -> None:
+    """log 에서 루트까지 붙은 콘솔(stdout/stderr) StreamHandler 에 _SKIP_ALERT 필터를 단다(.219).
+
+    봇이 basicConfig 등으로 자기 콘솔 핸들러를 붙였어도 같은 alert 가 콘솔·.out 에 두 줄 찍히지 않게.
+    파일 핸들러는 건드리지 않는다(파일 로그엔 남는다). 거르는 건 alert 레코드뿐.
+    """
+    consoles = {id(sys.stdout), id(sys.stderr), id(sys.__stdout__), id(sys.__stderr__)}
+    lg: Optional[logging.Logger] = log
+    while lg is not None:
+        for h in lg.handlers:
+            if type(h) is logging.StreamHandler and id(getattr(h, "stream", None)) in consoles \
+                    and _SKIP_ALERT not in h.filters:
+                h.addFilter(_SKIP_ALERT)
+        if not lg.propagate:
+            break
+        lg = lg.parent
+
+
 _current_bot: Optional[str] = None
 _alerts: list[str] = []
 logger = logging.getLogger("botkit.run")
@@ -95,7 +124,11 @@ def alert(msg: str, *, bot: Optional[str] = None, discord: bool = True) -> str:
         print(line, flush=True)
     except Exception:
         pass
-    logger.error(line)
+    try:
+        _mute_console_dup(logger)
+    except Exception:
+        pass
+    logger.error(line, extra={"botkit_alert": True})
     if discord:
         try:
             from dalwiki_client import discord_notify as _dn

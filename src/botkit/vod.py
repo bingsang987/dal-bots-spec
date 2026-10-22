@@ -215,6 +215,7 @@ class MissingGuard:
         guard.forget(key)                              # 소스에서 그 키가 사라졌을 때
 
     dry_run=True 면 DB 에 쓰지 않고 이번 프로세스 메모리에만 기록한다(is_missing 은 둘 다 본다).
+    dry-run 에선 테이블도 만들지 않고, 생성 DDL 은 호출자 conn 의 미커밋 트랜잭션을 커밋하지 않는다(.219).
     sweep(verify=True, 기본)은 새로 기록하기 전에 events/get 404 를 확인하고, 새 기록이 있으면 alert 한 줄.
     """
 
@@ -233,8 +234,16 @@ class MissingGuard:
         self.scope = scope
         self.dry_run = dry_run
         self._mem: dict[str, str] = {}
-        conn.executescript(self._SCHEMA)
-        conn.commit()
+        # executescript 는 실행 전에 호출자의 미커밋 트랜잭션을 COMMIT 한다 → 단일 execute 로.
+        self._table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='missing_keys'"
+        ).fetchone() is not None
+        if not self._table and not dry_run:
+            pending = conn.in_transaction
+            conn.execute(self._SCHEMA)
+            if not pending:
+                conn.commit()
+            self._table = True
 
     @staticmethod
     def _now() -> str:
@@ -310,6 +319,8 @@ class MissingGuard:
     def is_missing(self, key: str) -> bool:
         if key in self._mem:
             return True
+        if not self._table:
+            return False
         row = self.conn.execute(
             "SELECT 1 FROM missing_keys WHERE scope=? AND key=?", (self.scope, key)
         ).fetchone()
@@ -325,7 +336,7 @@ class MissingGuard:
     def keys(self) -> list[str]:
         rows = self.conn.execute(
             "SELECT key FROM missing_keys WHERE scope=? ORDER BY key", (self.scope,)
-        ).fetchall()
+        ).fetchall() if self._table else []
         return sorted({r[0] for r in rows} | set(self._mem))
 
 
