@@ -87,6 +87,14 @@ class FakeDal:
         raise AssertionError(f"FakeDal: 처리 안 된 path {path}")
 
 
+@pytest.fixture(autouse=True)
+def _no_real_webhook(monkeypatch):
+    """테스트가 실제 Discord 웹훅으로 나가지 않게(쓰기 알림·alert 둘 다)."""
+    from dalwiki_client import discord_notify
+    monkeypatch.delenv("DALWIKI_DISCORD_WEBHOOK_URL", raising=False)
+    monkeypatch.setattr(discord_notify, "WEBHOOK_URL", "")
+
+
 @pytest.fixture
 def fake_dal(monkeypatch):
     fake = FakeDal()

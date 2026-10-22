@@ -68,3 +68,22 @@ def test_handlers_cleaned_up(tmp_path, monkeypatch):
     before = len(logging.getLogger().handlers)
     run("tbot", lambda: None, argv=[], log_dir=tmp_path, _exit=False)
     assert len(logging.getLogger().handlers) == before
+
+
+# W8-0 .71 — alert 의 Discord 경로는 dalwiki_client.discord_notify 웹훅
+def test_alert_sends_via_dalwiki_webhook(monkeypatch):
+    from dalwiki_client import discord_notify
+    sent = []
+
+    class R:
+        status_code = 204
+
+    monkeypatch.setattr(runmod, "_current_bot", "kbobot")
+    monkeypatch.setattr(discord_notify.requests, "post", lambda url, json, timeout: sent.append((url, json)) or R())
+    alert("소스 0건", discord=True)
+    assert sent == []                                           # 웹훅 미설정 → 무동작
+    monkeypatch.setenv("DALWIKI_DISCORD_WEBHOOK_URL", "https://discord.test/hook")
+    alert("소스 0건", discord=True)
+    assert len(sent) == 1 and sent[0][0] == "https://discord.test/hook"
+    emb = sent[0][1]["embeds"][0]
+    assert emb["title"] == f"{ALERT_TAG} kbobot" and emb["description"] == "소스 0건"

@@ -16,7 +16,7 @@
   - 로깅: 콘솔(stdout, utf-8) + RotatingFileHandler(`<log_dir>/<bot_name>.log`, 5MB × 3)
   - `--dry-run` 표준 처리: argv 에서 떼어내고 os.environ["DRY_RUN"]="true" (dalwiki_client 가 매 호출 읽음)
   - 처리되지 않은 예외 → 로그 + `[HEALTH-ALERT] <bot>: 예외 종료 …` + exit 1
-  - `alert(msg)`: `[HEALTH-ALERT] <bot>: msg` 를 stdout 에 flush 출력 + logger.error (+ Discord webhook 있으면 전송)
+  - `alert(msg)`: `[HEALTH-ALERT] <bot>: msg` 를 stdout 에 flush 출력 + logger.error (+ `DALWIKI_DISCORD_WEBHOOK_URL` 웹훅 있으면 `dalwiki_client.discord_notify.send_alert`)
   - main_fn 이 int 를 돌려주면 그걸 exit code 로 쓴다
 
 규약(health_check 가 보는 것은 `[HEALTH-ALERT]` 한 줄):
@@ -76,9 +76,8 @@ def alert(msg: str, *, bot: Optional[str] = None, discord: bool = True) -> str:
     logger.error(line)
     if discord:
         try:
-            from ingest_core import discord as _dc
-            if _dc.is_enabled():
-                _dc.alert(one_line, title=f"{ALERT_TAG} {bot}")
+            from dalwiki_client import discord_notify as _dn
+            _dn.send_alert(one_line, title=f"{ALERT_TAG} {bot}")
         except Exception:
             pass
     return line

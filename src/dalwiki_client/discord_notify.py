@@ -59,6 +59,32 @@ def is_enabled() -> bool:
     return bool(WEBHOOK_URL)
 
 
+def _alert_webhook_url() -> str:
+    """alert 용 웹훅 URL. import 뒤에 .env 를 로드하는 봇도 있어 호출 시점 환경변수도 본다."""
+    return WEBHOOK_URL or os.environ.get("DALWIKI_DISCORD_WEBHOOK_URL", "").strip()
+
+
+def send_alert(message: str, *, title: Optional[str] = None) -> bool:
+    """경보 한 건을 같은 웹훅(`DALWIKI_DISCORD_WEBHOOK_URL`)으로 즉시(동기) 전송. botkit.run.alert 가 쓴다.
+
+    쓰기 알림 큐와 달리 배치하지 않는다(경보는 드물고, 프로세스가 곧 끝나도 남아야 함).
+    웹훅 미설정이면 False. 실패해도 예외를 던지지 않는다.
+    """
+    url = _alert_webhook_url()
+    if not url:
+        return False
+    embed = {"description": str(message)[:1900], "color": _COLOR["DELETE"]}
+    if title:
+        embed["title"] = title[:250]
+    payload = {"embeds": [embed], "username": WEBHOOK_USERNAME}
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        return r.status_code < 300
+    except Exception as e:
+        logger.warning("discord alert webhook failed: %s", e)
+        return False
+
+
 def enqueue(path: str, body: dict, resp_body) -> None:
     """Public entry — call from client._post() after a 2xx response.
 
