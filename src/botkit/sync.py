@@ -601,6 +601,16 @@ class SyncEngine:
                     if adopt:
                         self.log.info(f"ADOPT {ev.key} ← 기존 이벤트 {adopt}")
                         self._update(ev, adopt, stats, h, counter="adopted")
+                        # 입양한 id 를 소스에 없는 옛 key 가 쥐고 있었으면 그 state 행을 지금 제거한다.
+                        # absent 단계의 ABSENT_RELINKED 와 같은 뜻이지만, absent="keep"·source_window 밖·
+                        # absent_filter 제외 행은 absent 단계에 안 오므로 여기서 해야 두 key 가 한 id 를 공유하지 않는다.
+                        for okey, orow in list(existing.items()):
+                            if orow.event_id == adopt and okey not in source_keys:
+                                if not self.dry_run:
+                                    self.state.delete(okey)
+                                existing.pop(okey, None)
+                                stats.relinked += 1
+                                self.log.info(f"ADOPT_RELINKED {okey} → {ev.key} ({adopt}) state 행만 제거")
                     else:
                         self._create(ev, stats, h)
                     continue
@@ -679,13 +689,12 @@ class SyncEngine:
         return max(10, int(self.max_absent_ratio * len(rows)))
 
     def _alert_absent(self, stats: SyncStats, n_absent: int) -> None:
-        if not self.alert_absent or not (stats.absent_skipped or stats.deleted):
+        # 정상 소멸 삭제는 stats.summary() 로그로 충분하다 — HEALTH-ALERT 는 '삭제가 보류됐다'(불완전·대량)일 때만.
+        # (관제탑 결정 2026-10-22: 매일 정상 삭제가 있는 봇이 health_check 에서 빨갛게 보이지 않게)
+        if not self.alert_absent or not stats.absent_skipped:
             return
         tag = "[DRY-RUN] " if stats.dry_run else ""
-        if stats.absent_skipped:
-            msg = f"{tag}sync[{self.topic_id}] absent {n_absent}건 처리 보류({stats.absent_skipped})"
-        else:
-            msg = f"{tag}sync[{self.topic_id}] absent 삭제 {stats.deleted}건"
+        msg = f"{tag}sync[{self.topic_id}] absent {n_absent}건 처리 보류({stats.absent_skipped})"
         try:
             from .run import alert
             alert(msg)

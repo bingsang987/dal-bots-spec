@@ -402,15 +402,14 @@ def test_mass_absent_40pct_skips_delete_and_alerts_once(engine, fake_dal, soon, 
     assert len(lines) == 1 and "mass_absent" in lines[0] and "absent 20건" in lines[0]
 
 
-def test_absent_5pct_deletes_normally_with_alert(engine, fake_dal, soon, capsys):
+def test_absent_5pct_deletes_normally_without_alert(engine, fake_dal, soon, capsys):
     evs = _fifty(soon)
     engine.sync(evs)
     capsys.readouterr()
     st = engine.sync(evs[:47] + evs[50:])                          # 3/50 ≈ 5%
     assert st.absent_skipped is None and st.deleted == 3
     assert len(fake_dal.events) == 47
-    lines = _alert_lines(capsys.readouterr().out)
-    assert len(lines) == 1 and "absent 삭제 3건" in lines[0]
+    assert _alert_lines(capsys.readouterr().out) == []           # 정상 삭제는 alert 없음(관제탑 결정)
 
 
 def test_mass_absent_denominator_is_window_rows_and_options(tmp_path, fake_dal, soon, capsys):
@@ -483,3 +482,24 @@ def test_import_legacy_explicit_flag_and_live_commit(tmp_path, monkeypatch):
     s2 = SyncState(path, TOPIC)
     s2.import_legacy([("b", "id-b")])                                # 실제 run → 파일 commit
     assert not s2.in_memory and SyncState(path, TOPIC).get("b") is not None
+
+
+def test_adopt_relinks_old_key_even_with_keep_policy(tmp_path, fake_dal, soon):
+    """absent='keep' 이라도 입양한 id 를 쥐던 옛 key 의 state 행은 제거돼 두 key 가 한 id 를 공유하지 않는다."""
+    eng = SyncEngine(TOPIC, tmp_path / "s.db", absent="keep", dry_run=False,
+                     cache_days_back=5, cache_days_forward=30)
+    eng.sync([mk("old", "콘서트", soon)])
+    x = eng.state.get("old").event_id
+    st = eng.sync([mk("new", "콘서트", soon, description="본문 추가")])
+    assert (st.adopted, st.relinked, st.deleted, st.absent_kept) == (1, 1, 0, 0)
+    assert eng.state.get("new").event_id == x and eng.state.get("old") is None
+    assert x in fake_dal.events
+
+
+def test_normal_absent_delete_does_not_alert(engine, fake_dal, soon, capsys):
+    """정상 소멸 삭제(한도 이내)는 HEALTH-ALERT 를 내지 않는다 — 보류(absent_skipped)일 때만 낸다."""
+    engine.sync([mk("a", "A", soon), mk("b", "B", soon)])
+    capsys.readouterr()
+    st = engine.sync([mk("a", "A", soon)])
+    assert st.deleted == 1 and st.absent_skipped is None
+    assert _alert_lines(capsys.readouterr().out) == []

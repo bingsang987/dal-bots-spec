@@ -53,10 +53,10 @@ W8-0 결과(2026-10-22). 패키지는 editable 설치라 **푸시 전에 이미 
 ### 기본값만으로 동작이 바뀌는 것
 | 항목 | 전 | 후 | 봇이 볼 것 |
 |---|---|---|---|
-| .104/.68 입양 | topic scope는 다른 key가 쥔 id도 입양 → 같은 run absent가 그 id DELETE | 두 scope 모두 **이번 run 소스에 있는 key가 쥔 id는 입양 안 함**. 소스에서 사라진 key의 id는 입양 가능(재발급). absent 행 id를 이번 run 다른 key가 쥐었으면 DELETE 없이 state 행만 제거 | 로그 `ABSENT_RELINKED`, `stats.relinked`. 같은 (summary,start)가 소스에 두 key로 동시에 있으면 이제 두 번째는 **새로 create**(예전엔 같은 id 공유) |
+| .104/.68 입양 | topic scope는 다른 key가 쥔 id도 입양 → 같은 run absent가 그 id DELETE | 두 scope 모두 **이번 run 소스에 있는 key가 쥔 id는 입양 안 함**. 소스에서 사라진 key의 id는 입양 가능(재발급) — 입양 즉시 옛 key의 state 행 제거(`ADOPT_RELINKED`, absent=keep·창 밖·필터 제외여도). absent 단계에서 만나면 `ABSENT_RELINKED` | 로그 `ABSENT_RELINKED`, `stats.relinked`. 같은 (summary,start)가 소스에 두 key로 동시에 있으면 이제 두 번째는 **새로 create**(예전엔 같은 id 공유) |
 | .65 CHANGED+사람 삭제 | 404 → create로 되살림 | 같은 일정이 다른 id로 살아 있으면 그 id로 복구 PATCH(`recovered`), 없으면 `on_missing`(기본 ignore: `missing+1`, 쓰기 없음) | 사람이 지운 일정이 소스 변경으로 부활하지 않음. 되살려야 하는 봇은 `on_missing="recreate"` |
 | .66 대량 absent | 가드 없음 | absent 후보 > `max(10, 0.3 × 범위 행)` → `absent_skipped="mass_absent"`, 삭제 0. 범위 행 = `source_window`·`absent_filter` 통과 state 행 | 봇 자체 삭제 가드와 중복돼도 무해. 소스가 정상적으로 30% 넘게 바뀌는 봇(시즌 교체 등)은 `max_absent_ratio=` 상향 또는 `max_absent=N` |
-| .66 alert | 아무도 안 올림 | `absent_skipped`가 생기거나 `deleted>0`이면 엔진이 `[HEALTH-ALERT] sync[토픽] absent …` 한 줄 | **정상 소멸 삭제도 HEALTH-ALERT 한 줄이 된다.** 매일 정상 삭제가 있는 봇이 health_check에서 빨갛게 보이면 `alert_absent=False`로 끄고 봇이 직접 판단(관제탑 결정 필요). `exit_on_alert=True` 쓰는 봇은 현재 0개 |
+| .66 alert | 아무도 안 올림 | `absent_skipped`(source=0·source_incomplete·mass_absent)일 때만 엔진이 `[HEALTH-ALERT] sync[토픽] absent N건 처리 보류(사유)` 한 줄. **정상 삭제는 alert 없음**(관제탑 결정 2026-10-22, stats 로그로 충분) | 봇은 추가 처리 불필요. 끄려면 `alert_absent=False` |
 | .67 catchup 타임아웃 | on_ready 안 오면 무한 블록 | 300초 후 close + alert + `CatchupStats.timed_out=True`, 커서·큐 그대로 | 반환 stats의 `timed_out` 확인 |
 | .69 stop_on | handler의 `SyncAborted`/`ListFailed`는 메시지 실패 → 재시도 큐 + 커서 전진 | run 중단, 커서 유지, 큐 미삽입, alert | `stats.stopped_by`. 구 동작이 필요하면 `stop_on=()`(LLMUnavailable은 항상 중단) |
 | .70 delete 404 | start 없는 이관 행은 매 run `delete 실패` | 404 = gone(state 제거, `deleted+1`) | 이관 잔재가 한 번에 정리되며 `absent 삭제 N건` alert가 1회 나올 수 있음 |
@@ -118,6 +118,5 @@ DALWIKI_DISCORD_NOTIFY=create,delete     # 미설정=전부, none=끔(HEALTH-ALE
 ### 봇 쪽에서 바꿔야 할 호출
 - couponcalbot(배치 B, .176과 함께): 묶음 K가 ready로 자동 등록될 때 `approval.supersede(bot, K)` 호출. 안 해도 승인 시 중복 create는 이제 안 나지만, 카드가 #승인필요에 남는다.
 - stellivebot(배치 D): 이미 `present | alive`로 자체 확인 중 → `sweep(..., verify=False)`로 GET 중복 제거(선택).
-- 매일 정상 삭제가 있는 봇: `deleted>0` alert를 health_check가 어떻게 볼지 관제탑이 정한 뒤, 필요하면 `alert_absent=False`.
 - 자체 absent 비율 가드를 가진 봇(PLBOT·KBObot·ipobot·econcal·housing·tumblbug·coupon·lckbot·lckteambot): 엔진 가드와 겹친다. 분모가 틀린 봇 가드(lck 계열)는 지우고 엔진 가드에 맡겨도 된다.
 - 필수 변경은 없다(기존 호출 그대로 동작).
