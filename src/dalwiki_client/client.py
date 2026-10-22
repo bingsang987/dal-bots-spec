@@ -239,6 +239,7 @@ SUMMARY_MAX = 100
 SUMMARY_MIN = 2
 DESCRIPTION_MIN = 2
 LOCATION_MAX = 64
+LOCATION_MIN = 2
 # events/update 가 null 로 지울 수 있는 필드(OpenAPI: description/location/link/rrule 은 string|null).
 # 빈 문자열은 서버 400(minLength 2 / uri) → 지울 땐 반드시 null. dalbots-bmi.216
 CLEARABLE_FIELDS = {"description": "description", "location": "location", "link": "link", "rrule": "rrule"}
@@ -274,7 +275,7 @@ def _guard_location(location) -> Optional[str]:
     if location is None:
         return None
     loc = str(location).strip()
-    if not loc:
+    if len(loc) < LOCATION_MIN:          # OpenAPI: location minLength 2 → 1자는 400. 생략(dalbots-bmi.231)
         return None
     if len(loc) > LOCATION_MAX:
         logger.info(f"location {LOCATION_MAX}자 초과 → 절단: {loc[:20]}…")

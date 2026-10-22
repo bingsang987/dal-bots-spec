@@ -288,3 +288,9 @@ def test_uoc_404_recovery_falls_back_to_uncategorized(fake_dal, soon):
     cache.load(days_back=1, days_forward=10)
     assert _uoc("gone", soon, category_id="A", cache=cache) == legacy
     assert fake_dal.events[legacy]["categoryId"] == "A"
+
+
+def test_guard_location_drops_single_char(monkeypatch):
+    from dalwiki_client import client as C
+    assert C._guard_location("A") is None and C._guard_location(" ") is None
+    assert C._guard_location("AB") == "AB"
