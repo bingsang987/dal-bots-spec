@@ -214,6 +214,7 @@ class MissingGuard:
         guard.forget(key)                              # 소스에서 그 키가 사라졌을 때
 
     dry_run=True 면 DB 에 쓰지 않고 이번 프로세스 메모리에만 기록한다(is_missing 은 둘 다 본다).
+    sweep(verify=True, 기본)은 새로 기록하기 전에 events/get 404 를 확인하고, 새 기록이 있으면 alert 한 줄.
     """
 
     _SCHEMA = """
@@ -238,16 +239,21 @@ class MissingGuard:
     def _now() -> str:
         return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    def sweep(self, mapping: Mapping[str, str], present_ids: Iterable[str]) -> list[str]:
+    def sweep(self, mapping: Mapping[str, str], present_ids: Iterable[str], *, verify: bool = True) -> list[str]:
         """mapping(key→event_id) 중 event_id 가 present_ids(완전 조회한 토픽 id 집합)에 없는 키를 기록하고 반환.
 
         반환은 이번 sweep 에서 없다고 확인된 키 전부(이미 기록돼 있던 것 포함, 정렬).
         present_ids 에 다시 보이는 키가 기록돼 있으면 기록을 지운다(일시 오판 복구).
         호출자는 present_ids 가 매핑된 이벤트의 시간 범위를 빠짐없이 덮는지 책임진다
         (윈도우 밖 매핑은 mapping 에서 빼고 넘길 것).
+
+        verify=True(기본): **새로** 기록할 키는 먼저 `events/get` 으로 확인한다 — 404 면 기록, 200 이면 살아 있는
+        이벤트(조회 창 경계 오판)라 기록하지 않고 반환에서도 뺀다, 그 외(네트워크·5xx)는 판단 보류로 이번 프로세스
+        메모리에만 둔다(이번 run 은 재생성 금지, 다음 run 재확인). 새로 기록한 키가 있으면 alert 한 줄.
         """
         present = set(present_ids)
         missing: list[str] = []
+        recorded: list[str] = []
         for key, eid in mapping.items():
             if not key or not eid:
                 continue
@@ -255,9 +261,21 @@ class MissingGuard:
                 if self.is_missing(key):
                     self.forget(key)
                 continue
-            missing.append(key)
             if self.is_missing(key):
+                missing.append(key)
                 continue
+            if verify:
+                status = self._get_status(eid)
+                if status == 200:
+                    logger.info(f"MISSING[{self.scope}] {key} → {eid} 조회엔 없지만 events/get 200 → 기록 안 함")
+                    continue
+                if status != 404:
+                    logger.warning(f"MISSING[{self.scope}] {key} → {eid} events/get status={status} → 이번 run 만 보류")
+                    self._mem[key] = eid
+                    missing.append(key)
+                    continue
+            missing.append(key)
+            recorded.append(key)
             logger.info(f"MISSING[{self.scope}] {key} → {eid} 토픽에 없음(사람 삭제로 간주, 재생성 금지)")
             if self.dry_run:
                 self._mem[key] = eid
@@ -268,7 +286,25 @@ class MissingGuard:
                 )
         if not self.dry_run:
             self.conn.commit()
+        if recorded:
+            msg = (f"MissingGuard[{self.scope}] 사람 삭제 추정 {len(recorded)}건 기록(재생성 금지): "
+                   + ", ".join(sorted(recorded)[:5]) + (" …" if len(recorded) > 5 else ""))
+            try:
+                from .run import alert
+                alert(("[DRY-RUN] " if self.dry_run else "") + msg)
+            except Exception:
+                logger.warning(msg)
         return sorted(missing)
+
+    @staticmethod
+    def _get_status(event_id: str) -> Optional[int]:
+        """events/get status(200/404/…). 네트워크 재시도 소진이면 None."""
+        try:
+            resp = dw._post("/events/get", {"id": event_id})
+        except Exception as e:
+            logger.warning(f"events/get {event_id} 예외: {e!r}")
+            return None
+        return resp.get("status") if resp else None
 
     def is_missing(self, key: str) -> bool:
         if key in self._mem:

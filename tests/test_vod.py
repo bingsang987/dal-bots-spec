@@ -137,7 +137,7 @@ def conn():
     c.close()
 
 
-def test_missing_guard_sweep_is_missing_forget(conn):
+def test_missing_guard_sweep_is_missing_forget(conn, fake_dal):
     g = vod.MissingGuard(conn, scope="indiv")
     mapping = {"m1": "e1", "m2": "e2", "m3": "e3"}
     assert g.sweep(mapping, present_ids={"e1", "e3"}) == ["m2"]
@@ -148,24 +148,52 @@ def test_missing_guard_sweep_is_missing_forget(conn):
     assert not g.is_missing("m2")
 
 
-def test_missing_guard_scope_isolation_and_persistence(conn):
+def test_missing_guard_scope_isolation_and_persistence(conn, fake_dal):
     vod.MissingGuard(conn, scope="indiv").sweep({"k": "e"}, present_ids=set())
     assert not vod.MissingGuard(conn, scope="group").is_missing("k")
     assert vod.MissingGuard(conn, scope="indiv").is_missing("k")     # 같은 DB 재오픈해도 유지
 
 
-def test_missing_guard_clears_when_present_again(conn):
+def test_missing_guard_clears_when_present_again(conn, fake_dal):
     g = vod.MissingGuard(conn, scope="s")
     g.sweep({"k": "e"}, present_ids=set())
     g.sweep({"k": "e"}, present_ids={"e"})
     assert not g.is_missing("k")
 
 
-def test_missing_guard_dry_run_writes_nothing(conn):
+def test_missing_guard_dry_run_writes_nothing(conn, fake_dal):
     g = vod.MissingGuard(conn, scope="s", dry_run=True)
     assert g.sweep({"k": "e"}, present_ids=set()) == ["k"]
     assert g.is_missing("k")
     assert conn.execute("SELECT COUNT(*) FROM missing_keys").fetchone()[0] == 0
+
+
+def test_missing_guard_verify_skips_live_event_and_alerts_new(conn, fake_dal, soon, capsys):
+    alive = fake_dal.add_event("T", "방송", soon)          # 조회 창 밖이라 present 에 없지만 실제로는 살아 있음
+    g = vod.MissingGuard(conn, scope="indiv")
+    got = g.sweep({"live": alive, "gone": "deleted-id"}, present_ids=set())
+    assert got == ["gone"]
+    assert g.is_missing("gone") and not g.is_missing("live")
+    assert sorted(b["id"] for b in fake_dal.paths("/events/get")) == sorted([alive, "deleted-id"])
+    out = capsys.readouterr().out
+    lines = [l for l in out.splitlines() if l.startswith("[HEALTH-ALERT]")]
+    assert len(lines) == 1 and "MissingGuard[indiv]" in lines[0] and "gone" in lines[0]
+    # 재호출: 이미 기록된 키는 재확인·재경보 안 함
+    n = len(fake_dal.paths("/events/get"))
+    assert g.sweep({"gone": "deleted-id"}, present_ids=set()) == ["gone"]
+    assert len(fake_dal.paths("/events/get")) == n
+    assert "[HEALTH-ALERT]" not in capsys.readouterr().out
+
+
+def test_missing_guard_verify_uncertain_is_memory_only(conn, fake_dal, monkeypatch):
+    monkeypatch.setattr(vod.dw, "_post", lambda path, body, retries=3: None)   # 네트워크 소진
+    g = vod.MissingGuard(conn, scope="s")
+    assert g.sweep({"k": "e"}, present_ids=set()) == ["k"]
+    assert g.is_missing("k")                                              # 이번 run 은 재생성 금지
+    assert conn.execute("SELECT COUNT(*) FROM missing_keys").fetchone()[0] == 0
+    assert vod.MissingGuard(conn, scope="s").is_missing("k") is False     # 다음 run 재확인
+    # verify=False 는 구 동작
+    assert vod.MissingGuard(conn, scope="s2").sweep({"k": "e"}, present_ids=set(), verify=False) == ["k"]
 
 
 def test_drop_tombstones(conn):
