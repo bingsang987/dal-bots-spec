@@ -31,12 +31,14 @@ from .client import (
     update_or_create_event,
 )
 from .histories import (
+    HistoriesFailed,
     TombstoneStore,
     deletion_actor,
     get_latest_action,
     list_histories,
     was_human_deleted,
     was_human_edited,
+    was_human_touched,
 )
 
 __all__ = [
@@ -54,10 +56,12 @@ __all__ = [
     "update_event",
     "update_or_create_event",
     # histories / tombstones
+    "HistoriesFailed",
     "TombstoneStore",
     "deletion_actor",
     "get_latest_action",
     "list_histories",
     "was_human_deleted",
     "was_human_edited",
+    "was_human_touched",
 ]

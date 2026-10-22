@@ -358,6 +358,7 @@ class SyncEngine:
                 "ignore"(기본, 사람이 지운 자리 재생성 금지) | "recreate" | "forget"(state 에서만 제거).
             cache_days_back/forward/chunk_days: TopicCache 윈도우. 윈도우 밖 이벤트는 missing 판정 안 함.
             protect_human_edits: True 면 PATCH 전 histories 로 사람 UPDATE 유무 확인(호출 비용 有).
+                histories 조회 실패면 이번 run PATCH 보류(failed+1, state 그대로 → 다음 run 재확인).
             dry_run: None 이면 dalwiki_client 의 DRY_RUN 판정을 따른다.
             adopt_scope: NEW 입양·404 복구 후보 범위. "topic"(기본, 토픽 전체 (summary,start)) |
                 "category"(Event.category_id 가 같은 것만 + 다른 key 가 쥔 id 제외). 한 토픽에 여러
@@ -440,15 +441,18 @@ class SyncEngine:
         stats.failures.append(msg)
         self.log.warning(f"sync fail: {msg}")
 
-    def _human_edited(self, event_id: str) -> bool:
+    def _human_edited(self, event_id: str) -> Optional[bool]:
+        """protect_human_edits 일 때 사람 UPDATE 유무. None = histories 조회 실패(판단 불가).
+
+        실패를 False(사람 편집 없음)로 읽으면 사람 편집 위에 PATCH 한다(.225) → 호출자는 None 이면 쓰지 않는다."""
         if not self.protect_human_edits:
             return False
         try:
             from dalwiki_client.histories import was_human_edited
             return was_human_edited(self.topic_id, event_id)
-        except Exception as e:  # histories 실패는 보호 안 함(경고만)
-            self.log.warning(f"was_human_edited({event_id}) 실패: {e}")
-            return False
+        except Exception as e:
+            self.log.warning(f"was_human_edited({event_id}) 실패 → 이번 run PATCH 보류: {e}")
+            return None
 
     # -- write primitives ----------------------------------------------
     def _create(self, ev: Event, stats: SyncStats, h: str, *, counter: str = "created") -> Optional[str]:
@@ -465,7 +469,11 @@ class SyncEngine:
 
     def _update(self, ev: Event, event_id: str, stats: SyncStats, h: str, *, counter: str = "updated") -> bool:
         """update → 404 면 캐시 복구 → 그래도 없으면 create. 성공 시 True."""
-        if self._human_edited(event_id):
+        human = self._human_edited(event_id)
+        if human is None:
+            self._fail(stats, f"histories 조회 실패 → PATCH 보류 key={ev.key} id={event_id}")
+            return False
+        if human:
             stats.protected += 1
             self.log.info(f"PROTECTED(사람 편집) {ev.key} {event_id} → PATCH 생략")
             return True
@@ -517,7 +525,11 @@ class SyncEngine:
             alt = cands[-1] if cands else None
         if not alt or alt == row.event_id:
             return False
-        if self._human_edited(alt):
+        human = self._human_edited(alt)
+        if human is None:
+            self._fail(stats, f"histories 조회 실패 → PATCH 보류 key={ev.key} id={alt}")
+            return True
+        if human:
             stats.protected += 1
             self.log.info(f"PROTECTED(사람 편집) {ev.key} {alt} → PATCH 생략")
             return True

@@ -39,7 +39,10 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Callable, Iterable, Optional
 
-from .client import _post
+# _post 는 호출 시점에 client 모듈에서 찾는다(import 시점 바인딩이면 테스트·래퍼가 dw._post 를 바꿔도
+# histories 만 실 API 로 나간다, dalbots-bmi.219).
+from . import client as _client
+from .client import DalWikiError
 
 logger = logging.getLogger(__name__)
 
@@ -47,43 +50,75 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Histories API 래퍼
 # ---------------------------------------------------------------------------
+class HistoriesFailed(DalWikiError):
+    """/topics/histories 조회 실패(네트워크 재시도 소진·HTTP≠200·body 가 list 아님).
+
+    '이력 없음'(빈 list)과 구분한다 — 실패를 '사람 편집 없음'으로 읽으면 사람이 고친 이벤트를 봇이
+    덮어쓴다(dalbots-bmi.225).
+    """
+
+    def __init__(self, topic_id: str, event_id: Optional[str], detail: str):
+        self.topic_id = topic_id
+        self.event_id = event_id
+        self.detail = detail
+        ev = f" event={event_id}" if event_id else ""
+        super().__init__(f"topics/histories 실패 topic={topic_id}{ev}: {detail}")
+
+
 def list_histories(
     topic_id: str,
     event_id: Optional[str] = None,
     take: int = 25,
     skip: int = 0,
+    *,
+    raise_on_fail: bool = False,
 ) -> list[dict]:
     """`/topics/histories` 호출. event_id 없으면 토픽 전체, 있으면 단일 이벤트.
 
     Returns:
         list[dict] — 각 항목: {eventId, version, type, summary, start, end,
         categoryId, categoryPath, createdAt, userName, userSlug, isBot, ipAddress}
-        실패 시 빈 리스트.
+        빈 list = 정말 이력 없음.
+
+    raise_on_fail: True 면 실패 시 HistoriesFailed. False(기본, 구 동작)면 경고 로그 후 [] —
+        '없음'과 '실패'를 구분 못 하므로 보호·삭제 판단에 쓰는 호출은 True 로 둘 것.
     """
     body: dict = {"topicId": topic_id, "take": min(take, 100), "skip": skip}
     if event_id:
         body["eventId"] = event_id
-    resp = _post("/topics/histories", body)
-    if resp is None or resp.get("status") != 200:
-        return []
-    data = resp.get("body")
-    return data if isinstance(data, list) else []
+    resp = _client._post("/topics/histories", body)
+    if resp is None:
+        detail = "네트워크 재시도 소진"
+    elif resp.get("status") != 200:
+        detail = f"HTTP {resp.get('status')}"
+    elif not isinstance(resp.get("body"), list):
+        detail = f"body 가 list 아님({type(resp.get('body')).__name__})"
+    else:
+        return resp["body"]
+    err = HistoriesFailed(topic_id, event_id, detail)
+    if raise_on_fail:
+        raise err
+    logger.warning(f"{err} (raise_on_fail=False → [] 반환)")
+    return []
 
 
-def get_latest_action(topic_id: str, event_id: str) -> Optional[dict]:
-    """단일 이벤트의 가장 최근 액션 1건. 없으면 None."""
-    hist = list_histories(topic_id, event_id=event_id, take=1)
+def get_latest_action(topic_id: str, event_id: str, *, raise_on_fail: bool = True) -> Optional[dict]:
+    """단일 이벤트의 가장 최근 액션 1건. 이력이 없으면 None.
+
+    조회 실패는 HistoriesFailed(raise_on_fail=False 면 구 동작: None).
+    """
+    hist = list_histories(topic_id, event_id=event_id, take=1, raise_on_fail=raise_on_fail)
     return hist[0] if hist else None
 
 
-def was_human_deleted(topic_id: str, event_id: str) -> bool:
+def was_human_deleted(topic_id: str, event_id: str, *, raise_on_fail: bool = True) -> bool:
     """가장 최근 액션이 사람의 DELETE 인지.
 
     "봇이 만든 이벤트가 dal.wiki에서 사라졌다 → 사람이 지운 것인지 봇이 지운 것인지"
     구분에 사용. dedup_clean 같은 자동화 봇이 지운 케이스를 사용자 의사로 오인하지
-    않도록 isBot=false 만 True 로 반환한다.
+    않도록 isBot=false 만 True 로 반환한다. 조회 실패는 HistoriesFailed(raise_on_fail=False 면 False).
     """
-    latest = get_latest_action(topic_id, event_id)
+    latest = get_latest_action(topic_id, event_id, raise_on_fail=raise_on_fail)
     return bool(
         latest
         and latest.get("type") == "DELETE"
@@ -91,24 +126,39 @@ def was_human_deleted(topic_id: str, event_id: str) -> bool:
     )
 
 
-def was_human_edited(topic_id: str, event_id: str, lookback: int = 10) -> bool:
+def was_human_edited(topic_id: str, event_id: str, lookback: int = 10, *,
+                     raise_on_fail: bool = True) -> bool:
     """이벤트 이력에 사람의 UPDATE 가 한 번이라도 있었는지.
 
     봇이 PATCH 로 덮어쓰기 전에 호출하여 "사람이 손으로 수정한 일정은 보존" 패턴에
     사용. 메인 캘린더의 description 수동 추가분(카페 공지 링크 등) 보호에 유용.
+
+    조회 실패는 HistoriesFailed — 예전엔 실패가 False(=사람 편집 없음)로 읽혀 사람 편집 위에
+    PATCH 할 수 있었다(.225). raise_on_fail=False 면 그 구 동작.
     """
-    hist = list_histories(topic_id, event_id=event_id, take=lookback)
+    hist = list_histories(topic_id, event_id=event_id, take=lookback, raise_on_fail=raise_on_fail)
     return any(
         h.get("type") == "UPDATE" and not h.get("isBot", True) for h in hist
     )
 
 
-def deletion_actor(topic_id: str, event_id: str) -> Optional[dict]:
+def was_human_touched(topic_id: str, event_id: str, lookback: int = 25) -> bool:
+    """이력에 사람의 CREATE 또는 UPDATE 가 있는지(사람이 만들었거나 고친 이벤트). 실패는 HistoriesFailed.
+
+    봇이 입양한 사람 작성 이벤트까지 포함한다 — absent 삭제 보호(SyncEngine protect_human_absent)용.
+    """
+    hist = list_histories(topic_id, event_id=event_id, take=lookback, raise_on_fail=True)
+    return any(
+        h.get("type") in ("CREATE", "UPDATE") and not h.get("isBot", True) for h in hist
+    )
+
+
+def deletion_actor(topic_id: str, event_id: str, *, raise_on_fail: bool = True) -> Optional[dict]:
     """이벤트의 가장 최근 DELETE 액션 객체 반환 (사람/봇 모두 포함). 없으면 None.
 
-    tombstone 추가 시 사람 정보를 기록하거나 진단용으로 사용.
+    tombstone 추가 시 사람 정보를 기록하거나 진단용으로 사용. 조회 실패는 HistoriesFailed.
     """
-    latest = get_latest_action(topic_id, event_id)
+    latest = get_latest_action(topic_id, event_id, raise_on_fail=raise_on_fail)
     if latest and latest.get("type") == "DELETE":
         return latest
     return None
@@ -253,7 +303,12 @@ class TombstoneStore:
         for key, ev_id in list(mapping.items()):
             if not ev_id or ev_id in current:
                 continue
-            latest = get_latest_action(topic_id, ev_id)
+            try:
+                latest = get_latest_action(topic_id, ev_id)
+            except HistoriesFailed as e:
+                # 조회 실패 — 사람/봇 삭제를 모른다. 매핑·tombstone 모두 건드리지 않고 다음 run 재확인.
+                logger.warning("sweep_from_mapping: %s → 이번 run 보류", e)
+                continue
             if not latest:
                 # 이력 없음 — 보존 만료 가능성. 보수적으로 매핑/tombstone 모두 건드리지 않음.
                 continue

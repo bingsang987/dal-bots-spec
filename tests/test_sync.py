@@ -516,3 +516,24 @@ def test_keep_policy_never_sets_absent_skipped_or_alerts(tmp_path, fake_dal, soo
     st0 = eng.sync([], source_complete=True)
     assert st0.absent_skipped is None and st0.absent_kept == 2
     assert _alert_lines(capsys.readouterr().out) == []
+
+
+# ── protect_human_edits / histories 실패(.225) ───────────────────────────
+def _protected_engine(tmp_path, **kw):
+    return SyncEngine(TOPIC, tmp_path / "p.db", dry_run=False, cache_days_back=5, cache_days_forward=30,
+                      protect_human_edits=True, **kw)
+
+
+def test_protect_histories_failure_holds_patch(tmp_path, fake_dal, soon):
+    eng = _protected_engine(tmp_path)
+    eng.sync([mk("k1", "AA", soon)])
+    eid = eng.state.get("k1").event_id
+    old_hash = eng.state.get("k1").content_hash
+    fake_dal.fail_histories = True
+    st = eng.sync([mk("k1", "AA 변경", soon)])
+    assert st.failed == 1 and st.updated == 0 and st.protected == 0
+    assert fake_dal.events[eid]["summary"] == "AA"              # PATCH 안 나감
+    assert eng.state.get("k1").content_hash == old_hash         # 다음 run 재시도
+    fake_dal.fail_histories = False
+    st = eng.sync([mk("k1", "AA 변경", soon)])
+    assert st.updated == 1 and fake_dal.events[eid]["summary"] == "AA 변경"

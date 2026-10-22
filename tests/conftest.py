@@ -26,6 +26,8 @@ class FakeDal:
         self.fail_create = False
         self.fail_update_status: int | None = None   # 404/500 등 강제
         self.fail_delete = False
+        self.histories: dict[str, list[dict]] = {}   # event_id → 최신순 이력
+        self.fail_histories: object = False   # True → 500, "net" → None, "body" → body 가 list 아님
 
     # -- helpers --------------------------------------------------------
     def add_event(self, topic_id, summary, start, end=None, **extra) -> str:
@@ -83,7 +85,15 @@ class FakeDal:
             e = self.events.get(body["id"])
             return {"status": 200, "body": e} if e else {"status": 404, "body": None}
         if path == "/topics/histories":
-            return {"status": 200, "body": []}
+            if self.fail_histories == "net":
+                return None
+            if self.fail_histories == "body":
+                return {"status": 200, "body": {"error": "x"}}
+            if self.fail_histories:
+                return {"status": 500, "body": None}
+            hist = self.histories.get(body.get("eventId"), []) if body.get("eventId") else                 [h for lst in self.histories.values() for h in lst]
+            skip = body.get("skip", 0)
+            return {"status": 200, "body": hist[skip: skip + body.get("take", 25)]}
         raise AssertionError(f"FakeDal: 처리 안 된 path {path}")
 
 
