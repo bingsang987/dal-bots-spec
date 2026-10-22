@@ -21,7 +21,7 @@
        UNCHANGED hash 같음 → skip
   3. **쓰기 성공 후에만 state 저장**(건별 커밋). 실패하면 state 그대로 → 다음 run 재시도.
   4. 소스에서 사라진 key(absent): 정책 keep | delete(기본). 단
-       - 이번 run 소스가 0건이거나
+       - 이번 run 소스가 0건이거나(allow_empty=True 면 이 조건은 빠진다 — 상위 완전 조회의 정상 0건)
        - source_complete=False(소스 일부 실패)
        - absent 후보가 한도(max_absent 또는 max(10, max_absent_ratio × 범위 행))를 넘음("mass_absent")
      면 absent 처리 전체 스킵(stats.absent_skipped 에 사유). 스킵되거나 삭제가 있으면 alert 한 줄(alert_absent).
@@ -602,6 +602,7 @@ class SyncEngine:
         source_complete: bool = True,
         source_window: Optional[tuple[object, object]] = None,
         absent_filter: Optional[Callable[[StateRow], bool]] = None,
+        allow_empty: bool = False,
     ) -> SyncStats:
         """소스 이벤트 목록을 토픽과 동기화하고 통계를 돌려준다.
 
@@ -611,6 +612,10 @@ class SyncEngine:
             source_window: (from, to). 주면 그 범위 안 start 를 가진 state 행만 absent 후보.
                 봇이 "앞으로 N일"만 긁는다면 꼭 줘야 한다(없으면 과거 이벤트가 전부 absent 로 지워진다).
             absent_filter: StateRow → bool. True 인 행만 absent 후보(카테고리 한정 등 추가 조건).
+            allow_empty: True 면 events 가 0건이어도 absent 처리(기본 False = "source=0" 보류, .218).
+                호출자가 상위에서 소스를 **완전 조회**했고 이 엔진 몫이 정상적으로 0건임을 알 때만 켠다
+                (카테고리·멤버별 엔진에서 마지막 남은 이벤트가 소스에서 사라진 경우). source_complete=False 와
+                대량 absent 가드는 그대로 적용된다.
 
         Raises:
             SyncAborted: TopicCache 로드 실패. 쓰기 0건.
@@ -692,7 +697,7 @@ class SyncEngine:
         elif self.absent == "keep":
             # keep 은 어차피 삭제가 없다 → source=0/incomplete 판정보다 먼저(보류 alert 소음 방지, .210)
             stats.absent_kept = len(absent_rows)
-        elif len(events) == 0:
+        elif len(events) == 0 and not allow_empty:
             stats.absent_skipped = "source=0"
             self.log.warning(f"소스 0건 → absent {len(absent_rows)}건 처리 스킵")
         elif not source_complete:

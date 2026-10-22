@@ -597,3 +597,22 @@ def test_protect_human_absent_histories_failure_holds_delete(tmp_path, fake_dal,
     st = eng.sync([mk("k1", "AA", soon)])
     assert st.failed == 1 and st.deleted == 0
     assert eid2 in fake_dal.events and eng.state.get("k2") is not None
+
+
+# ── .218 allow_empty ─────────────────────────────────────────────────────
+def test_allow_empty_propagates_last_delete(engine, fake_dal, soon, capsys):
+    engine.sync([mk("k1", "AA", soon)])
+    eid = engine.state.get("k1").event_id
+    st = engine.sync([], allow_empty=True)
+    assert st.absent_skipped is None and st.deleted == 1
+    assert eid not in fake_dal.events and engine.state.all() == {}
+    assert "[HEALTH-ALERT]" not in capsys.readouterr().out
+
+
+def test_allow_empty_still_respects_incomplete_and_mass_guard(engine, fake_dal, soon):
+    engine.sync([mk(f"k{i}", f"E{i}", soon) for i in range(12)])
+    st = engine.sync([], allow_empty=True, source_complete=False)
+    assert st.absent_skipped == "source_incomplete" and st.deleted == 0
+    st = engine.sync([], allow_empty=True)
+    assert st.absent_skipped == "mass_absent" and st.deleted == 0       # 12 > max(10, 0.3×12)
+    assert len(fake_dal.events) == 12
