@@ -111,6 +111,31 @@ class Event:
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
+    def matches_server(self, srv: dict) -> bool:
+        """서버 이벤트(events/get 결과 dict)가 이 Event 를 보냈을 때 저장될 내용과 같은가(.228).
+
+        content_hash 와 같은 가드(summary 클립·description 2자 미만 생략·location 절단·.000Z)를 거친 값으로
+        비교한다. 서버가 주지 않는 필드(startTimezone/endTimezone/rrule 이 응답에 없으면)는 비교하지 않는다.
+        events/list 결과는 description 이 없어 쓰면 안 된다 — events/get 결과를 넘길 것.
+        """
+        if not isinstance(srv, dict):
+            return False
+        checks = [
+            ((srv.get("summary") or "").strip(), dw._guard_summary(self.summary)),
+            (_iso_z(srv.get("start")) if srv.get("start") else "", self.start_iso()),
+            (_iso_z(srv.get("end")) if srv.get("end") else "", self.end_iso()),
+            (bool(srv.get("allDay")), bool(self.all_day)),
+            (srv.get("categoryId") or "", self.category_id or ""),
+            (srv.get("description") or "", dw._guard_description(self.description) or ""),
+            (srv.get("link") or "", self.link or ""),
+            (srv.get("location") or "", dw._guard_location(self.location) or ""),
+        ]
+        for name, mine in (("startTimezone", self.start_timezone), ("endTimezone", self.end_timezone),
+                           ("rrule", self.rrule or "")):
+            if name in srv:
+                checks.append((srv.get(name) or "", mine))
+        return all(a == b for a, b in checks)
+
     def write_kwargs(self) -> dict:
         """create_event/update_event 에 넘길 공통 kwargs."""
         return dict(
@@ -240,7 +265,8 @@ class SyncState:
     def import_legacy(self, rows: Iterable[tuple[str, str]], summary_start: Optional[dict] = None,
                       *, dry_run: Optional[bool] = None) -> int:
         """기존 봇 DB 의 (key, event_id) 를 이관. content_hash 는 빈 값 → 첫 run 에서 CHANGED 로 1회 PATCH 된다
-        (서버 상태를 모르는데 hash 를 지어내면 안 됨).
+        (서버 상태를 모르는데 hash 를 지어내면 안 됨). 서버 내용과 같은 행은 `SyncEngine.verify_imported(events)`
+        로 hash 를 확정하면 그 PATCH 가 빠진다(.228).
 
         dry_run: None 이면 dalwiki_client 의 DRY_RUN 판정. dry-run 이면 메모리 사본(`to_memory`)에만 넣고
             파일은 건드리지 않는다 — 같은 프로세스의 dry-run sync 는 이관된 행을 보지만 다음 실제 run 엔 남지 않는다.
@@ -604,6 +630,35 @@ class SyncEngine:
             self.cache.discard(row.event_id)
         stats.deleted += 1
         self.log.info(f"DELETE(absent) {key} {row.event_id} {row.summary!r}")
+
+    # -- 이관 보조 --------------------------------------------------------
+    def verify_imported(self, events: Iterable[Event], *,
+                        fetch: Optional[Callable[[str], Optional[dict]]] = None) -> int:
+        """import_legacy 로 들어온(hash 빈) state 행 중 서버 내용이 Event 와 같은 것의 hash 를 확정한다(.228).
+
+        events 중 state 행이 있고 content_hash 가 빈 key 마다 서버 이벤트를 `fetch(event_id)`(기본
+        dalwiki_client.get_event — events/list 는 description 이 없어 못 쓴다)로 읽어 `Event.matches_server` 면
+        state.put(key, id, hash). 다른 건 그대로 두어 첫 sync 에서 CHANGED 로 1회 PATCH 된다.
+        조회 실패(None)도 그대로 둔다. dry-run 이면 state 를 메모리 사본으로 바꾼 뒤 기록(파일 불변).
+
+        Returns: hash 를 확정한 행 수.
+        """
+        fetch = fetch or dw.get_event
+        if self.dry_run:
+            self.state.to_memory()
+        existing = self.state.all()
+        pending = [(ev, existing[ev.key]) for ev in events
+                   if ev.key in existing and not existing[ev.key].content_hash]
+        confirmed = 0
+        for ev, row in pending:
+            srv = fetch(row.event_id)
+            if srv and ev.matches_server(srv):
+                self.state.put(ev.key, row.event_id, ev.content_hash(), dw._guard_summary(ev.summary),
+                               ev.start_iso())
+                confirmed += 1
+        self.log.info(f"verify_imported[{self.topic_id}]: 이관 행 {len(pending)}건 중 서버와 같아 hash 확정 "
+                      f"{confirmed}건 / 첫 sync PATCH 예정 {len(pending) - confirmed}건")
+        return confirmed
 
     # -- main -----------------------------------------------------------
     def sync(

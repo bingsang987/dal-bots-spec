@@ -6,6 +6,7 @@ from datetime import timedelta
 import pytest
 
 from botkit.sync import Event, SyncAborted, SyncEngine, SyncState
+from dalwiki_client import client as dw
 
 TOPIC = "T1"
 
@@ -630,3 +631,43 @@ def test_clear_empty_fields_erases_removed_description(tmp_path, fake_dal, soon)
         assert fake_dal.events[eid].get("description") == expect
         st = eng.sync([mk("k1", f"AA{opt}", soon)])
         assert st.unchanged == 1
+
+
+
+# ── .228 verify_imported / Event.matches_server ─────────────────────────
+def test_verify_imported_confirms_matching_rows_only(tmp_path, fake_dal, soon):
+    same = mk("k1", "같음", soon, description="<p>본문</p>", location="서울")
+    diff = mk("k2", "다름", soon)
+    gone = mk("k3", "없음", soon)
+    e1 = fake_dal.add_event(TOPIC, "같음", soon, soon + timedelta(hours=2), categoryId="CAT", allDay=False,
+                            description="<p>본문</p>", location="서울")
+    e2 = fake_dal.add_event(TOPIC, "다름(사람 수정)", soon, soon + timedelta(hours=2), categoryId="CAT")
+    eng = SyncEngine(TOPIC, tmp_path / "v.db", dry_run=False, cache_days_back=5, cache_days_forward=30)
+    eng.state.import_legacy([("k1", e1), ("k2", e2), ("k3", "nope")], dry_run=False)
+    assert eng.verify_imported([same, diff, gone]) == 1
+    assert eng.state.get("k1").content_hash == same.content_hash()
+    assert eng.state.get("k2").content_hash == "" and eng.state.get("k3").content_hash == ""
+    n_upd = len(fake_dal.paths("/events/update"))
+    st = eng.sync([same, diff], absent_filter=lambda r: False)
+    assert st.unchanged == 1 and st.updated == 1                # 같은 건 PATCH 없음, 다른 건 1회
+    assert len(fake_dal.paths("/events/update")) == n_upd + 1
+    assert eng.verify_imported([same, diff]) == 0               # 확정된 행은 다시 안 본다
+
+
+def test_verify_imported_dry_run_leaves_file(tmp_path, fake_dal, soon):
+    ev = mk("k1", "같음", soon)
+    eid = fake_dal.add_event(TOPIC, "같음", soon, soon + timedelta(hours=2), categoryId="CAT")
+    path = tmp_path / "d.db"
+    SyncState(path, TOPIC).import_legacy([("k1", eid)], dry_run=False)
+    eng = SyncEngine(TOPIC, path, dry_run=True)
+    assert eng.verify_imported([ev]) == 1 and eng.state.in_memory
+    assert SyncState(path, TOPIC).get("k1").content_hash == ""
+
+
+def test_matches_server_uses_guards(soon):
+    ev = mk("k", "  제목  ", soon, description=" ", location="장소" * 40)
+    srv = {"summary": "제목", "start": ev.start_iso(), "end": ev.end_iso(), "allDay": False,
+           "categoryId": "CAT", "description": None, "location": dw._guard_location("장소" * 40)}
+    assert ev.matches_server(srv)
+    assert not ev.matches_server({**srv, "startTimezone": "UTC"})
+    assert not ev.matches_server({**srv, "link": "https://x"})
