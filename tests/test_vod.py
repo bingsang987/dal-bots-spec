@@ -52,6 +52,15 @@ def test_safe_summary():
     assert vod.safe_summary("  롤  ", fallback="갠방 - 롤") == "갠방 - 롤"
     assert vod.safe_summary("롤") == "방송"
     assert vod.safe_summary("", fallback="x") == "방송"
+
+
+def test_safe_summary_cut_has_no_trailing_space_and_is_guard_stable():
+    title = "가" * 99 + " " + "나" * 20                      # 100번째 글자가 공백
+    out = vod.safe_summary(title)
+    assert out == "가" * 99 and not out.endswith(" ")
+    assert dw._guard_summary(out) == out                    # 서버에 저장되는 값 == 봇이 비교하는 값
+    exact = "다" * 100 + "라"
+    assert vod.safe_summary(exact) == "다" * 100
     assert vod.safe_summary("  저챗 ") == "저챗"
     assert vod.safe_summary("가" * 150) == "가" * 100
 

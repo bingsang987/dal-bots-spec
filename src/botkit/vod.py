@@ -85,13 +85,14 @@ def safe_summary(s: Optional[str], fallback: Optional[str] = None) -> str:
     """dal.wiki summary 규칙(2~100자)에 맞춘 제목.
 
     strip 후 2자 미만이면 fallback(보통 원문 — 예: '갠방 - 롤' 의 '롤')으로, 그것도 2자 미만이면 '방송'.
-    100자 초과는 100자에서 자른다.
+    100자 초과는 100자에서 자르고 끝 공백을 지운다 — 안 지우면 client `_guard_summary` 가 strip 해 99자로
+    저장되고, 다음 run 비교에서 매번 불일치 → 영구 PATCH(.89).
     """
     t = (s or "").strip()
     if len(t) < SUMMARY_MIN:
         fb = (fallback or "").strip()
         t = fb if len(fb) >= SUMMARY_MIN else "방송"
-    return t[:SUMMARY_MAX]
+    return t[:SUMMARY_MAX].rstrip()
 
 
 # ---------------------------------------------------------------------------
