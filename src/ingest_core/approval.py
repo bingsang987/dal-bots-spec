@@ -6,6 +6,8 @@
   - 승인 러너 run_cycle()이 전 봇 큐를 한 번에 처리:
       이전 게시물의 ✅/❌ 반응을 읽어 승인→dal.wiki 등록 / 거절→폐기, 새 항목 게시.
   - 상시 프로세스 불필요(배치 때 잠깐 접속).
+  - 봇이 같은 일정을 자동 등록(ready)하면 supersede(bot, dedup_key) → 러너가 다시 게시·등록하지 않는다.
+    승인 등록도 토픽에 같은 (summary,start,category)가 있으면 create 대신 그 id 를 PATCH(중복 방지).
 
 ★ 안전 원칙: enqueue()는 어떤 경우에도 예외를 던지지 않는다(봇 흐름을 막지 않음).
   실패 시 False를 반환하므로 호출부에서 '원래대로 등록'으로 폴백할 수 있다.
@@ -35,7 +37,7 @@ CREATE TABLE IF NOT EXISTS approval_items (
     description TEXT, link TEXT, location TEXT, category_id TEXT,
     confidence REAL, dedup_key TEXT,
     source_url TEXT,                  -- 판단 근거(원본 트윗/공지/디스코드 메시지)
-    status TEXT DEFAULT 'new',        -- new | posted | approved | rejected
+    status TEXT DEFAULT 'new',        -- new | posted | approved | rejected | superseded
     message_id TEXT, created_at TEXT,
     UNIQUE(bot, dedup_key)
 );
@@ -137,17 +139,56 @@ def _embed(discord, row):
     return e
 
 
-def _register_approved(row, log) -> bool:
-    """승인된 항목을 dal.wiki에 등록. 성공 True."""
+def supersede(bot: str, dedup_key: str, db_path: Optional[str] = None) -> bool:
+    """대기 중(new/posted) 큐 항목을 'superseded' 로 — 봇이 같은 일정을 자동 등록했을 때 호출(.152).
+    러너는 superseded 를 게시·승인 처리하지 않는다. 절대 예외를 던지지 않는다. 바뀐 게 있으면 True."""
     try:
-        from dalwiki_client import update_or_create_event
-        new_id = update_or_create_event(
-            None, topic_id=row["topic_id"], summary=row["summary"],
-            start=row["start_iso"], end=row["end_iso"],
+        conn = _conn(db_path)
+        cur = conn.execute(
+            "UPDATE approval_items SET status='superseded' "
+            "WHERE bot=? AND dedup_key=? AND status IN ('new','posted')", (bot, dedup_key))
+        conn.commit()
+        ok = cur.rowcount > 0
+        conn.close()
+        return ok
+    except Exception:
+        return False
+
+
+def _find_existing(row) -> Optional[str]:
+    """토픽에 같은 (summary, start, category) 이벤트가 이미 있으면 그 id. 조회 실패는 ListFailed 그대로."""
+    from dalwiki_client.client import _guard_summary, _iso_z, list_events
+    start = _iso_z(row["start_iso"])
+    if not start:
+        return None
+    t = datetime.fromisoformat(start.replace("Z", "+00:00"))
+    want = (_guard_summary(row["summary"] or ""), start, row["category_id"] or None)
+    for e in list_events(row["topic_id"], from_=t - timedelta(days=1), to=t + timedelta(days=1), take=1000):
+        got = ((e.get("summary") or "").strip(), e.get("start") or "", e.get("categoryId") or None)
+        if got == want and e.get("id"):
+            return e["id"]
+    return None
+
+
+def _register_approved(row, log) -> bool:
+    """승인된 항목을 dal.wiki에 등록. 성공 True.
+
+    토픽에 같은 (summary, start, category) 가 이미 있으면(봇이 자동 등록함) create 하지 않고 그 id 를 PATCH(.152).
+    토픽 조회가 실패하면 등록하지 않는다(False → posted 유지, 다음 사이클 재시도) — 중복 create 방지.
+    """
+    try:
+        from dalwiki_client import create_event, update_event
+        fields = dict(
+            summary=row["summary"], start=row["start_iso"], end=row["end_iso"],
             all_day=bool(row["all_day"]), description=row["description"] or None,
             link=row["link"] or None, location=row["location"] or None,
             category_id=row["category_id"])
-        return bool(new_id)
+        existing = _find_existing(row)
+        if existing:
+            ok, sc = update_event(existing, **fields)
+            log(f"  [승인] 이미 등록된 일정 {existing} → PATCH {'ok' if ok else f'실패 status={sc}'}")
+            return ok
+        return bool(create_event(topic_id=row["topic_id"], **fields))
     except Exception as e:
         log(f"  [승인] 등록 실패: {e}")
         return False
