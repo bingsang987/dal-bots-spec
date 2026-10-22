@@ -23,7 +23,8 @@
   4. 소스에서 사라진 key(absent): 정책 keep | delete(기본). 단
        - 이번 run 소스가 0건이거나
        - source_complete=False(소스 일부 실패)
-     면 absent 처리 전체 스킵(stats.absent_skipped 에 사유).
+       - absent 후보가 한도(max_absent 또는 max(10, max_absent_ratio × 범위 행))를 넘음("mass_absent")
+     면 absent 처리 전체 스킵(stats.absent_skipped 에 사유). 스킵되거나 삭제가 있으면 alert 한 줄(alert_absent).
      `source_window=(from, to)` 를 주면 그 범위 안의 state 행만 absent 후보(과거 이벤트 보호).
      absent 행의 id 를 이번 run 다른 key 가 쥐었으면(소스가 같은 일정을 새 key 로 재발급 → 입양) DELETE 없이
      state 행만 지운다(ABSENT_RELINKED, stats.relinked).
@@ -325,6 +326,9 @@ class SyncEngine:
         log: Optional[logging.Logger] = None,
         adopt_scope: AdoptScope = "topic",
         cache: Optional[TopicCache] = None,
+        max_absent_ratio: Optional[float] = 0.3,
+        max_absent: Optional[int] = None,
+        alert_absent: bool = True,
     ):
         """
         Args:
@@ -341,6 +345,12 @@ class SyncEngine:
                 카테고리 엔진을 돌리거나 카테고리마다 같은 제목·시각 이벤트가 흔하면 "category".
             cache: 미리 strict 로드한 TopicCache. 주면 sync() 에서 다시 로드하지 않고 그걸 쓴다(같은 토픽
                 엔진 여러 개가 캐시 하나 공유). 로드 실패 처리는 호출자 몫. None 이면 매 sync() 마다 로드.
+            max_absent_ratio / max_absent: 대량 absent 가드(.66). absent 후보가 한도를 넘으면 삭제 전체 보류
+                (`absent_skipped="mass_absent"`). 한도 = max_absent(주면 그 값) 또는 max(10, ratio × 범위 행 수).
+                범위 행 = source_window·absent_filter 를 통과한 state 행(소스에 있는 것 포함). 둘 다 None 이면 끔.
+                파서가 반쯤 깨져 소스가 일부만 돌려줄 때(0건도 예외도 아님) 대량 오삭제를 막는다.
+            alert_absent: True(기본)면 absent 가 보류되거나(absent_skipped) 삭제가 1건 이상일 때
+                `botkit.run.alert` 한 줄([HEALTH-ALERT]). 봇이 따로 올리지 않던 신호를 엔진이 낸다.
         """
         if absent not in ("keep", "delete"):
             raise ValueError(f"absent 정책은 keep|delete: {absent!r}")
@@ -356,6 +366,9 @@ class SyncEngine:
         self.cache_chunk_days = cache_chunk_days
         self.protect_human_edits = protect_human_edits
         self.adopt_scope = adopt_scope
+        self.max_absent_ratio = max_absent_ratio
+        self.max_absent = max_absent
+        self.alert_absent = alert_absent
         self._dry_run = dry_run
         self.state = state or SyncState(state_path, topic_id)
         self.log = log or logger
@@ -604,6 +617,7 @@ class SyncEngine:
             }
         if absent_filter is not None:
             absent_rows = {k: r for k, r in absent_rows.items() if absent_filter(r)}
+        limit = self._absent_limit(existing, source_window, absent_filter)
 
         if not absent_rows:
             pass
@@ -615,6 +629,9 @@ class SyncEngine:
             self.log.warning(f"소스 일부 실패 → absent {len(absent_rows)}건 처리 스킵")
         elif self.absent == "keep":
             stats.absent_kept = len(absent_rows)
+        elif limit is not None and len(absent_rows) > limit:
+            stats.absent_skipped = "mass_absent"
+            self.log.warning(f"absent 후보 {len(absent_rows)}건 > 한도 {limit} → 대량 소멸 의심, 삭제 전체 보류")
         else:
             for k, r in absent_rows.items():
                 try:
@@ -623,5 +640,35 @@ class SyncEngine:
                     self._fail(stats, f"delete 예외 key={k}: {e!r}")
                     self.log.exception(f"delete 예외 key={k}")
 
+        self._alert_absent(stats, len(absent_rows))
         self.log.info(stats.summary())
         return stats
+
+    def _absent_limit(self, existing: dict[str, StateRow], source_window, absent_filter) -> Optional[int]:
+        """대량 absent 한도. 분모는 absent 판정 범위(창·필터) 안의 state 행 — 창 밖 과거 행이 분모를 부풀리지 않게."""
+        if self.max_absent is not None:
+            return self.max_absent
+        if self.max_absent_ratio is None:
+            return None
+        rows = list(existing.values())
+        if source_window is not None:
+            lo, hi = _iso_z(source_window[0]), _iso_z(source_window[1])
+            rows = [r for r in rows
+                    if r.start_iso and (lo is None or r.start_iso >= lo) and (hi is None or r.start_iso < hi)]
+        if absent_filter is not None:
+            rows = [r for r in rows if absent_filter(r)]
+        return max(10, int(self.max_absent_ratio * len(rows)))
+
+    def _alert_absent(self, stats: SyncStats, n_absent: int) -> None:
+        if not self.alert_absent or not (stats.absent_skipped or stats.deleted):
+            return
+        tag = "[DRY-RUN] " if stats.dry_run else ""
+        if stats.absent_skipped:
+            msg = f"{tag}sync[{self.topic_id}] absent {n_absent}건 처리 보류({stats.absent_skipped})"
+        else:
+            msg = f"{tag}sync[{self.topic_id}] absent 삭제 {stats.deleted}건"
+        try:
+            from .run import alert
+            alert(msg)
+        except Exception:
+            self.log.warning(msg)

@@ -377,3 +377,64 @@ def test_changed_with_stale_id_recovers_by_old_summary_start(engine, fake_dal, s
 def dw_iso(dt):
     from dalwiki_client.client import _iso_z
     return _iso_z(dt)
+
+
+# ---------------------------------------------------------------------------
+# W8-0 .66 — 대량 absent 가드 + absent 보류/삭제 alert
+# ---------------------------------------------------------------------------
+def _alert_lines(out: str) -> list[str]:
+    from botkit.run import ALERT_TAG
+    return [l for l in out.splitlines() if l.startswith(ALERT_TAG)]
+
+
+def _fifty(soon):
+    return [mk(f"k{i}", f"경기 {i}", soon + timedelta(hours=i)) for i in range(50)]
+
+
+def test_mass_absent_40pct_skips_delete_and_alerts_once(engine, fake_dal, soon, capsys):
+    evs = _fifty(soon)
+    engine.sync(evs)
+    capsys.readouterr()
+    st = engine.sync(evs[:30])                                     # 20/50 = 40% 사라짐
+    assert st.absent_skipped == "mass_absent" and st.deleted == 0
+    assert len(fake_dal.events) == 50 and len(engine.state.all()) == 50
+    lines = _alert_lines(capsys.readouterr().out)
+    assert len(lines) == 1 and "mass_absent" in lines[0] and "absent 20건" in lines[0]
+
+
+def test_absent_5pct_deletes_normally_with_alert(engine, fake_dal, soon, capsys):
+    evs = _fifty(soon)
+    engine.sync(evs)
+    capsys.readouterr()
+    st = engine.sync(evs[:47] + evs[50:])                          # 3/50 ≈ 5%
+    assert st.absent_skipped is None and st.deleted == 3
+    assert len(fake_dal.events) == 47
+    lines = _alert_lines(capsys.readouterr().out)
+    assert len(lines) == 1 and "absent 삭제 3건" in lines[0]
+
+
+def test_mass_absent_denominator_is_window_rows_and_options(tmp_path, fake_dal, soon, capsys):
+    # 창 밖 과거 행 100건이 분모를 부풀리지 않는다: 창 안 20행 중 11건 사라짐 → max(10, 6)=10 초과 → 보류
+    eng = SyncEngine(TOPIC, tmp_path / "s.db", dry_run=False, cache_days_back=5, cache_days_forward=30)
+    past = (soon - timedelta(days=200)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    for i in range(100):
+        eng.state.put(f"old{i}", f"gone{i}", "h", f"옛 {i}", past)
+    evs = [mk(f"k{i}", f"경기 {i}", soon + timedelta(hours=i)) for i in range(20)]
+    eng.sync(evs, source_window=(soon - timedelta(days=1), soon + timedelta(days=20)))
+    st = eng.sync(evs[:9], source_window=(soon - timedelta(days=1), soon + timedelta(days=20)))
+    assert st.absent_skipped == "mass_absent" and st.deleted == 0
+    # max_absent 로 한도 직접 지정 / 가드 끔
+    eng2 = SyncEngine(TOPIC, tmp_path / "s.db", dry_run=False, cache_days_back=5, cache_days_forward=30,
+                      max_absent_ratio=None, alert_absent=False)
+    capsys.readouterr()
+    st2 = eng2.sync(evs[:9], source_window=(soon - timedelta(days=1), soon + timedelta(days=20)))
+    assert st2.deleted == 11 and _alert_lines(capsys.readouterr().out) == []
+
+
+def test_source_incomplete_skip_also_alerts(engine, fake_dal, soon, capsys):
+    engine.sync([mk("k1", "AA", soon), mk("k2", "BB", soon)])
+    capsys.readouterr()
+    st = engine.sync([mk("k1", "AA", soon)], source_complete=False)
+    assert st.absent_skipped == "source_incomplete"
+    lines = _alert_lines(capsys.readouterr().out)
+    assert len(lines) == 1 and "source_incomplete" in lines[0]
