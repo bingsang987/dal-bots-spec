@@ -59,6 +59,20 @@ class _Resp:
         self.content = [_Block(text)]
 
 
+class _TBlock:
+    """type 이 있는 SDK 스타일 블록."""
+    def __init__(self, type, **kw):
+        self.type = type
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+class _FullResp:
+    def __init__(self, blocks, stop_reason="end_turn"):
+        self.content = blocks
+        self.stop_reason = stop_reason
+
+
 class FakeClient:
     def __init__(self, script):
         """script: 순서대로 반환할 항목. str → 응답 텍스트, Exception → raise."""
@@ -73,6 +87,8 @@ class FakeClient:
                 item = outer.script.pop(0)
                 if isinstance(item, Exception):
                     raise item
+                if isinstance(item, _FullResp):
+                    return item
                 return _Resp(item)
 
         self.messages = _Messages()
@@ -80,10 +96,10 @@ class FakeClient:
 
 def test_llm_json_ok_passes_model_and_prompt():
     cl = FakeClient(['```json\n{"ok": true}\n```'])
-    out = llm_json("질문", model=SONNET, max_tokens=99, client=cl, system="sys", cache_system=True)
+    out = llm_json("질문", model=SONNET, max_tokens=2000, client=cl, system="sys", cache_system=True)
     assert out == {"ok": True}
     kw = cl.calls[0]
-    assert kw["model"] == SONNET and kw["max_tokens"] == 99
+    assert kw["model"] == SONNET and kw["max_tokens"] == 2000
     assert kw["messages"][0]["content"] == "질문"
     assert kw["system"][0]["cache_control"] == {"type": "ephemeral"}
 
@@ -127,6 +143,84 @@ def test_llm_json_parse_error_is_not_unavailable():
     cl = FakeClient(["죄송합니다, JSON 을 만들 수 없어요."])
     with pytest.raises(LLMParseError):
         llm_json("q", client=cl)
+
+
+# ── thinking 블록 / max_tokens 하한 (dalbots-bmi.48) ─────────────────────
+def test_llm_json_ignores_thinking_blocks_and_uses_text_only():
+    resp = _FullResp([
+        _TBlock("thinking", thinking="", signature="sig"),
+        _TBlock("redacted_thinking", data="xxx"),
+        _TBlock("text", text='{"ok": 1}'),
+    ])
+    cl = FakeClient([resp])
+    assert llm_json("q", model=HAIKU, client=cl) == {"ok": 1}
+
+
+def test_llm_json_thinking_text_with_braces_is_not_parsed():
+    # thinking 요약에 { 가 있어도 text 블록만 본다
+    resp = _FullResp([
+        _TBlock("thinking", thinking='후보 {"bad": 0}', signature="s"),
+        _TBlock("text", text='[{"k": "v"}]'),
+    ])
+    assert llm_json("q", model=HAIKU, client=FakeClient([resp])) == [{"k": "v"}]
+
+
+def test_llm_json_dict_blocks_with_type_are_filtered():
+    resp = _FullResp([{"type": "thinking", "thinking": "{x}"}, {"type": "text", "text": '{"d": 2}'}])
+    assert llm_json("q", model=HAIKU, client=FakeClient([resp])) == {"d": 2}
+
+
+def test_llm_json_thinking_only_max_tokens_raises_with_reason(caplog):
+    resp = _FullResp([_TBlock("thinking", thinking="", signature="s")], stop_reason="max_tokens")
+    cl = FakeClient([resp])
+    with caplog.at_level("WARNING", logger="botkit.llm"):
+        with pytest.raises(LLMParseError) as ei:
+            llm_json("q", model=HAIKU, max_tokens=120, client=cl)
+    msg = str(ei.value)
+    assert "max_tokens" in msg and "thinking" in msg and "1024" in msg
+    assert ei.value.stop_reason == "max_tokens"
+    assert any("빈 응답" in r.message and r.levelname == "WARNING" for r in caplog.records)
+    assert len(cl.calls) == 1            # 파싱 실패는 재시도하지 않음
+
+
+def test_llm_json_truncated_json_mentions_max_tokens():
+    resp = _FullResp([_TBlock("thinking", thinking=""), _TBlock("text", text='{"a": [1, 2')],
+                     stop_reason="max_tokens")
+    with pytest.raises(LLMParseError) as ei:
+        llm_json("q", model=HAIKU, client=FakeClient([resp]))
+    assert "stop_reason=max_tokens" in str(ei.value)
+
+
+def test_llm_json_empty_end_turn_is_plain_parse_error():
+    resp = _FullResp([_TBlock("text", text="")], stop_reason="end_turn")
+    with pytest.raises(LLMParseError) as ei:
+        llm_json("q", model=HAIKU, client=FakeClient([resp]))
+    assert "max_tokens" not in str(ei.value) and ei.value.stop_reason == "end_turn"
+
+
+@pytest.mark.parametrize("model, asked, sent", [
+    (HAIKU, 120, 1024),
+    (SONNET, 99, 1024),
+    (HAIKU, 1024, 1024),
+    (HAIKU, 4000, 4000),
+    ("claude-opus-5-5", 50, 1024),
+    ("anthropic.claude-haiku-5-5", 50, 1024),
+    ("claude-haiku-4-5", 120, 120),      # 4.x 는 thinking 기본 off → 그대로
+])
+def test_max_tokens_floor_for_thinking_models(model, asked, sent):
+    cl = FakeClient(['{"ok": 1}'])
+    llm_json("q", model=model, max_tokens=asked, client=cl)
+    assert cl.calls[0]["max_tokens"] == sent
+
+
+def test_llm_call_returns_text_only_and_warns_on_empty_max_tokens(caplog):
+    from botkit.llm import llm_call
+    ok = _FullResp([_TBlock("thinking", thinking="생각"), _TBlock("text", text="안녕")])
+    assert llm_call("q", client=FakeClient([ok])) == "안녕"
+    empty = _FullResp([_TBlock("thinking", thinking="")], stop_reason="max_tokens")
+    with caplog.at_level("WARNING", logger="botkit.llm"):
+        assert llm_call("q", client=FakeClient([empty])) == ""
+    assert any("max_tokens" in r.message for r in caplog.records)
 
 
 # ── 이미지 ───────────────────────────────────────────────────────────────

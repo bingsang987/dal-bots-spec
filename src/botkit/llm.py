@@ -19,6 +19,15 @@
   - 이미지: bytes/경로/URL dict 모두 허용. 긴 변 7,900px 초과면 PIL 로 축소(Anthropic 상한 8,000),
     media_type 은 매직바이트로 감지.
   - `cache_system=True` 면 system 프롬프트에 cache_control(ephemeral) 부여(반복 호출 비용 절감).
+  - thinking (dalbots-bmi.48): Haiku 5.5 / Sonnet 5.5 (및 5.x 세대 전부)는 `thinking` 파라미터를
+    안 보내도 adaptive thinking 이 기본으로 켜지고, thinking 토큰도 `max_tokens` 에 포함된다.
+    그래서 max_tokens 가 작으면 thinking 만 쓰다 stop_reason=max_tokens 로 끝나 text 블록이 없다.
+      · 응답 텍스트는 content 중 type=="text" 블록만 이어붙인다(thinking/redacted_thinking/tool_use 등 무시).
+      · 5.x thinking 모델이면 max_tokens 하한 MIN_THINKING_MAX_TOKENS(=1024) 적용 — 더 작게 줘도
+        1024 로 올려 보낸다(Anthropic 마이그레이션 가이드의 short-output 예시 값. thinking 은 과금되지만
+        출력이 짧으면 실제 사용 토큰은 작다). 하한 이상 값은 그대로.
+      · 텍스트가 비었는데 stop_reason=max_tokens 면 경고 로그 + LLMParseError 메시지에 사유
+        ("thinking 이 max_tokens 소진")를 적는다. JSON 이 잘려 깨진 경우도 stop_reason 을 덧붙인다.
 """
 from __future__ import annotations
 
@@ -37,6 +46,10 @@ logger = logging.getLogger("botkit.llm")
 HAIKU = "claude-haiku-5-5"
 SONNET = "claude-sonnet-5-5"
 DEFAULT_MODEL = HAIKU
+
+# 5.x 세대(Haiku/Sonnet/Opus/Fable/Mythos 5.x)는 thinking 기본 on → max_tokens 하한 적용 대상.
+_THINKING_DEFAULT_RE = re.compile(r"^(?:anthropic\.)?claude-(?:haiku|sonnet|opus|fable|mythos)-5(?:-|$)")
+MIN_THINKING_MAX_TOKENS = 1024
 
 MAX_IMAGE_EDGE = 7900
 _RETRY_STATUSES = {429, 500, 502, 503, 529}
@@ -58,11 +71,16 @@ class LLMUnavailable(LLMError):
 
 
 class LLMParseError(LLMError):
-    """응답에서 JSON 을 못 뽑았다. 이 입력 한 건의 실패(재시도 큐 대상)."""
+    """응답에서 JSON 을 못 뽑았다. 이 입력 한 건의 실패(재시도 큐 대상).
 
-    def __init__(self, text: str, detail: str = ""):
+    stop_reason: 알 수 있으면 응답의 stop_reason("max_tokens" 면 thinking/출력이 상한에 걸린 것).
+    """
+
+    def __init__(self, text: str, detail: str = "", stop_reason: Optional[str] = None):
         self.text = text
-        super().__init__(f"JSON 파싱 실패: {detail} | {text[:200]!r}")
+        self.detail = detail
+        self.stop_reason = stop_reason
+        super().__init__(f"JSON 파싱 실패: {detail} | {(text or '')[:200]!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -197,33 +215,58 @@ def _is_credit_error(exc: Exception) -> bool:
     return any(p in msg for p in _CREDIT_PATTERNS)
 
 
+def _field(block, name):
+    v = getattr(block, name, None)
+    if v is None and isinstance(block, dict):
+        v = block.get(name)
+    return v
+
+
 def _text_of(resp) -> str:
+    """content 중 type=="text" 블록의 text 만 이어붙인다. thinking/redacted_thinking/tool_use 등은 무시.
+
+    type 이 없는 블록(구형/가짜 응답)은 text 가 있으면 텍스트로 본다.
+    """
     parts = []
     for block in getattr(resp, "content", None) or []:
-        t = getattr(block, "text", None)
-        if t is None and isinstance(block, dict):
-            t = block.get("text")
-        if t:
+        btype = _field(block, "type")
+        if btype is not None and btype != "text":
+            continue
+        t = _field(block, "text")
+        if isinstance(t, str) and t:
             parts.append(t)
     return "".join(parts)
 
 
-def llm_call(
-    prompt: str | Sequence[dict],
-    *,
-    system: Optional[str] = None,
-    images: Optional[Sequence] = None,
-    model: str = DEFAULT_MODEL,
-    max_tokens: int = 1024,
-    temperature: Optional[float] = None,
-    retries: int = 4,
-    backoff_base: float = 2.0,
-    cache_system: bool = False,
-    client=None,
-    api_key: Optional[str] = None,
-    sleep=time.sleep,
-) -> str:
-    """Claude 호출 → 응답 텍스트. 429/529/5xx 지수 백오프, 401/403/크레딧 → LLMUnavailable."""
+def _block_types(resp) -> list:
+    return [_field(b, "type") or "?" for b in getattr(resp, "content", None) or []]
+
+
+def thinks_by_default(model: str) -> bool:
+    """thinking 파라미터 없이도 thinking 이 켜지는(=thinking 토큰이 max_tokens 를 먹는) 모델인가."""
+    return bool(_THINKING_DEFAULT_RE.match(model or ""))
+
+
+def effective_max_tokens(model: str, max_tokens: int) -> int:
+    """thinking 기본 모델이면 MIN_THINKING_MAX_TOKENS 하한 적용."""
+    if thinks_by_default(model) and max_tokens < MIN_THINKING_MAX_TOKENS:
+        return MIN_THINKING_MAX_TOKENS
+    return max_tokens
+
+
+def _empty_reason(resp, max_tokens: int) -> Optional[str]:
+    """텍스트가 빈 응답의 사유 문자열(로그/에러용). stop_reason=max_tokens 일 때만."""
+    if _field(resp, "stop_reason") != "max_tokens":
+        return None
+    return (f"stop_reason=max_tokens — thinking 이 max_tokens={max_tokens} 를 소진, text 블록 없음 "
+            f"(content={_block_types(resp)})")
+
+
+def _request(
+    prompt, *, system, images, model, max_tokens, temperature, retries, backoff_base,
+    cache_system, client, api_key, sleep,
+):
+    """Claude 호출 → 원본 응답 객체. (text, stop_reason, 실제 max_tokens) 해석은 호출자가."""
     if isinstance(prompt, str):
         content: list[dict] = []
         for im in images or []:
@@ -233,7 +276,10 @@ def llm_call(
     else:
         messages = list(prompt)
 
-    kwargs: dict[str, Any] = {"model": model, "max_tokens": max_tokens, "messages": messages}
+    eff = effective_max_tokens(model, max_tokens)
+    if eff != max_tokens:
+        logger.debug(f"max_tokens {max_tokens} → {eff} (thinking 모델 {model} 하한)")
+    kwargs: dict[str, Any] = {"model": model, "max_tokens": eff, "messages": messages}
     if system:
         if cache_system:
             kwargs["system"] = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
@@ -246,8 +292,7 @@ def llm_call(
     last_exc: Optional[Exception] = None
     for attempt in range(1, retries + 1):
         try:
-            resp = cl.messages.create(**kwargs)
-            return _text_of(resp)
+            return cl.messages.create(**kwargs)
         except LLMError:
             raise
         except Exception as e:  # anthropic.APIStatusError 계열 + 네트워크
@@ -274,6 +319,39 @@ def _looks_transient(exc: Exception) -> bool:
     return any(k in name for k in ("connection", "timeout", "overloaded", "ratelimit", "internalserver"))
 
 
+def llm_call(
+    prompt: str | Sequence[dict],
+    *,
+    system: Optional[str] = None,
+    images: Optional[Sequence] = None,
+    model: str = DEFAULT_MODEL,
+    max_tokens: int = 1024,
+    temperature: Optional[float] = None,
+    retries: int = 4,
+    backoff_base: float = 2.0,
+    cache_system: bool = False,
+    client=None,
+    api_key: Optional[str] = None,
+    sleep=time.sleep,
+) -> str:
+    """Claude 호출 → 응답 텍스트(type=="text" 블록만). 429/529/5xx 지수 백오프, 401/403/크레딧 → LLMUnavailable.
+
+    thinking 기본 모델은 max_tokens 하한(MIN_THINKING_MAX_TOKENS) 적용. 텍스트가 비고
+    stop_reason=max_tokens 면 경고 로그만 남기고 "" 반환(판단은 호출자).
+    """
+    resp = _request(
+        prompt, system=system, images=images, model=model, max_tokens=max_tokens,
+        temperature=temperature, retries=retries, backoff_base=backoff_base,
+        cache_system=cache_system, client=client, api_key=api_key, sleep=sleep,
+    )
+    text = _text_of(resp)
+    if not text.strip():
+        reason = _empty_reason(resp, effective_max_tokens(model, max_tokens))
+        if reason:
+            logger.warning(f"LLM 빈 응답 ({model}): {reason}")
+    return text
+
+
 def llm_json(
     prompt: str | Sequence[dict],
     *,
@@ -290,13 +368,33 @@ def llm_json(
 ) -> Any:
     """Claude 에게 JSON 을 받아 파싱해 돌려준다(dict/list).
 
+    응답 content 중 type=="text" 블록만 파싱한다(thinking/redacted_thinking 무시).
+    model 이 thinking 기본 모델(HAIKU/SONNET 등 5.x)이면 max_tokens 는 최소 MIN_THINKING_MAX_TOKENS(1024)
+    로 올려 보낸다 — thinking 토큰도 max_tokens 에 포함되기 때문.
+
     Raises:
         LLMUnavailable: 인증/크레딧/과부하 재시도 소진 — 커서 전진 금지.
         LLMParseError: 응답은 왔지만 JSON 이 아님 — 이 입력만 실패.
+            text 가 비고 stop_reason=max_tokens 면 detail 에 "thinking 이 max_tokens 소진" 사유 +
+            경고 로그. 예외의 .stop_reason 에 응답 stop_reason 이 담긴다.
     """
-    text = llm_call(
+    resp = _request(
         prompt, system=system, images=images, model=model, max_tokens=max_tokens,
-        temperature=temperature, retries=retries, cache_system=cache_system,
-        client=client, api_key=api_key, sleep=sleep,
+        temperature=temperature, retries=retries, backoff_base=2.0,
+        cache_system=cache_system, client=client, api_key=api_key, sleep=sleep,
     )
-    return extract_json(text)
+    text = _text_of(resp)
+    stop_reason = _field(resp, "stop_reason")
+    if not text.strip():
+        reason = _empty_reason(resp, effective_max_tokens(model, max_tokens))
+        if reason:
+            logger.warning(f"LLM 빈 응답 ({model}): {reason}")
+            raise LLMParseError(text, f"빈 응답 — {reason}", stop_reason=stop_reason)
+    try:
+        return extract_json(text)
+    except LLMParseError as e:
+        e.stop_reason = stop_reason
+        if stop_reason == "max_tokens":
+            raise LLMParseError(text, f"{e.detail} (stop_reason=max_tokens — 출력 잘림)",
+                                stop_reason=stop_reason) from e
+        raise
