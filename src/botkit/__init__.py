@@ -10,6 +10,9 @@
     botkit.llm      llm_json() — Claude JSON 호출(코드펜스 제거·raw_decode·429/529 백오프·
                     LLMUnavailable), 모델 상수 HAIKU/SONNET, 이미지 전처리
     botkit.discord  catchup() — Discord 채널 소급 처리(메시지별 성공 시에만 커서 전진, 실패는 재시도 큐)
+    botkit.vod      VOD/미러 봇 공통 조각 — VOD 블록·append_vod, fetch_events_chunked(complete 플래그),
+                    get_description/hydrate_descriptions, MissingGuard(Tombstone 대체), safe_summary
+                    (`from botkit import vod`)
 
 규약(spec/04-cross-cutting.md):
     - 자체 dalwiki 래퍼 금지. 쓰기는 전부 dalwiki_client 경유.
