@@ -338,3 +338,42 @@ def test_relinked_in_dry_run_keeps_state(tmp_path, fake_dal, soon):
     st = dry.sync([mk("new", "콘서트", soon)])
     assert (st.relinked, st.deleted) == (1, 0)
     assert dry.state.get("old") is not None and dry.state.get("new") is None
+
+
+# ---------------------------------------------------------------------------
+# W8-0 .65 — CHANGED 경로도 on_missing 존중(사람이 지운 일정 재생성 금지)
+# ---------------------------------------------------------------------------
+def test_changed_but_human_deleted_is_ignored_by_default(engine, fake_dal, soon):
+    engine.sync([mk("k1", "AA", soon)])
+    fake_dal.events.pop(engine.state.get("k1").event_id)          # 사람이 삭제
+    n_calls = len(fake_dal.calls)
+    st = engine.sync([mk("k1", "AA (장소 변경)", soon)])           # 소스 내용이 바뀜
+    assert (st.missing, st.updated, st.created) == (1, 0, 0)
+    writes = [p for p, _ in fake_dal.calls[n_calls:] if p != "/events/list"]
+    assert writes == []                                            # PATCH·create 없음
+    assert fake_dal.events == {}
+
+
+def test_changed_but_human_deleted_recreate_policy(tmp_path, fake_dal, soon):
+    eng = SyncEngine(TOPIC, tmp_path / "s.db", on_missing="recreate", dry_run=False,
+                     cache_days_back=5, cache_days_forward=30)
+    eng.sync([mk("k1", "AA", soon)])
+    fake_dal.events.pop(eng.state.get("k1").event_id)
+    st = eng.sync([mk("k1", "AA (장소 변경)", soon)])
+    assert (st.missing, st.created) == (1, 1)
+    assert fake_dal.events[eng.state.get("k1").event_id]["summary"] == "AA (장소 변경)"
+
+
+def test_changed_with_stale_id_recovers_by_old_summary_start(engine, fake_dal, soon):
+    # 이관 행(옛 id, 창 안 start) — 같은 일정이 v2 id 로 살아 있으면 missing 이 아니라 복구 PATCH
+    v2 = fake_dal.add_event(TOPIC, "AA", soon)
+    engine.state.import_legacy([("k1", "old-uuid")], summary_start={"k1": ("AA", dw_iso(soon))})
+    st = engine.sync([mk("k1", "AA (연기)", soon)])
+    assert (st.recovered, st.missing, st.created) == (1, 0, 0)
+    assert engine.state.get("k1").event_id == v2
+    assert fake_dal.events[v2]["summary"] == "AA (연기)"
+
+
+def dw_iso(dt):
+    from dalwiki_client.client import _iso_z
+    return _iso_z(dt)

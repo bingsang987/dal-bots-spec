@@ -12,7 +12,9 @@
   2. key 별로
        NEW       state 에 없음 → (같은 summary+start 가 토픽에 이미 있으면 그 id 를 입양해 update)
                  → 없으면 create
-       CHANGED   content_hash 다름 → update. 404 면 캐시에서 (summary,start) 로 복구 → 그래도 없으면 create
+       CHANGED   content_hash 다름 → update. 404 면 캐시에서 (summary,start) 로 복구 → 그래도 없으면 create.
+                 단 state id 가 토픽 윈도우 안에 없으면(사람 삭제) 같은 일정의 다른 id 로 복구를 먼저 시도하고,
+                 없으면 UNCHANGED 와 똑같이 on_missing 정책(ignore 면 missing+1, PATCH·create 없음).
      입양·404 복구는 이번 run 소스에 있는 다른 key 가 이미 쥔 id 를 건너뛴다(두 key 가 한 이벤트를 가리키지 않게).
      adopt_scope="category" 면 후보를 Event.category_id 가 같은 이벤트로 더 좁힌다(공유 토픽에서 카테고리마다
      같은 (summary,start) 가 있을 때 남의 것을 덮지 않게).
@@ -459,6 +461,44 @@ class SyncEngine:
         self.log.warning(f"UPDATE 404 key={ev.key} id={event_id}, 캐시 미스 → create")
         return self._create(ev, stats, h) is not None
 
+    def _missing(self, ev: Event, row: StateRow, stats: SyncStats, h: str) -> None:
+        """state 엔 있는데 토픽(윈도우 안)에서 id 가 사라짐 → on_missing 정책."""
+        stats.missing += 1
+        if self.on_missing == "recreate":
+            self.log.warning(f"MISSING {ev.key} {row.event_id} → recreate")
+            self._create(ev, stats, h)
+        elif self.on_missing == "forget":
+            self.log.warning(f"MISSING {ev.key} {row.event_id} → state 에서 제거")
+            if not self.dry_run:
+                self.state.delete(ev.key)
+        else:
+            self.log.info(f"MISSING {ev.key} {row.event_id} (ignore — 사람 삭제 존중)")
+
+    def _recover_changed(self, ev: Event, row: StateRow, stats: SyncStats, h: str) -> bool:
+        """CHANGED 인데 state id 가 토픽에 없음 → 같은 일정이 다른 id 로 살아 있으면(옛 v1 id·이관 행) 그 id 로
+        PATCH(RECOVER404 와 같은 의미). 새 내용·옛 (summary,start) 순으로 찾는다. 못 찾으면 False → on_missing."""
+        alt = self._lookup(ev)
+        if not alt and row.summary and self.cache is not None:
+            cands = self.cache.lookup_all(row.summary, row.start_iso, exclude=self._claimed)
+            if self.adopt_scope == "category":
+                cands = [c for c in cands if (self.cache.category_of(c) or None) == (ev.category_id or None)]
+            alt = cands[-1] if cands else None
+        if not alt or alt == row.event_id:
+            return False
+        if self._human_edited(alt):
+            stats.protected += 1
+            self.log.info(f"PROTECTED(사람 편집) {ev.key} {alt} → PATCH 생략")
+            return True
+        ok, sc = dw.update_event(alt, **ev.write_kwargs())
+        if not ok:
+            self._fail(stats, f"update(복구 id) 실패 key={ev.key} id={alt} status={sc}")
+            return True
+        self._save(ev, alt, h)
+        stats.recovered += 1
+        stats.updated += 1
+        self.log.info(f"RECOVER {ev.key} {row.event_id} → {alt} (state id 가 토픽에 없음)")
+        return True
+
     def _delete(self, key: str, row: StateRow, stats: SyncStats) -> None:
         if row.event_id in self._claimed:
             # 이 id 는 이번 run 소스에 있는 다른 key 가 쥐고 있다(재발급 입양 등) → 이벤트는 남기고 옛 행만 제거
@@ -533,20 +573,14 @@ class SyncEngine:
                         self._create(ev, stats, h)
                     continue
 
-                if row.content_hash == h:
-                    # UNCHANGED — 단, 토픽 윈도우 안인데 id 가 사라졌으면 missing
-                    if row.start_iso and cache.in_window(row.start_iso) and not cache.has_id(row.event_id):
-                        stats.missing += 1
-                        if self.on_missing == "recreate":
-                            self.log.warning(f"MISSING {ev.key} {row.event_id} → recreate")
-                            self._create(ev, stats, h)
-                        elif self.on_missing == "forget":
-                            self.log.warning(f"MISSING {ev.key} {row.event_id} → state 에서 제거")
-                            if not self.dry_run:
-                                self.state.delete(ev.key)
-                        else:
-                            self.log.info(f"MISSING {ev.key} {row.event_id} (ignore — 사람 삭제 존중)")
+                # 토픽 윈도우 안인데 id 가 사라졌으면 missing — UNCHANGED·CHANGED 둘 다 on_missing 정책(.65)
+                if row.start_iso and cache.in_window(row.start_iso) and not cache.has_id(row.event_id):
+                    if row.content_hash != h and self._recover_changed(ev, row, stats, h):
                         continue
+                    self._missing(ev, row, stats, h)
+                    continue
+
+                if row.content_hash == h:
                     stats.unchanged += 1
                     unchanged_keys.append(ev.key)
                     continue
