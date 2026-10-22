@@ -226,3 +226,54 @@ def test_run_catchup_once_normal_path_still_works(store, monkeypatch):
     seen = []
     st = run_catchup_once("tok", [1], cur, lambda m: seen.append(m.id), retry_queue=rq, delay=0)
     assert not st.timed_out and seen == [11] and cur.get(1) == 11
+
+
+# ---------------------------------------------------------------------------
+# W8-0 .69 — stop_on: dal.wiki 장애는 메시지 실패가 아니라 run 중단
+# ---------------------------------------------------------------------------
+def test_sync_aborted_stops_without_queue_or_cursor(store, capsys):
+    from botkit.sync import SyncAborted
+    cur, rq = store
+    cur.set(1, 10)
+    ch = Channel(1, [Msg(11, "a"), Msg(12, "DOWN"), Msg(13, "c")])
+    seen = []
+
+    def handler(m):
+        if m.content == "DOWN":
+            raise SyncAborted("TopicCache 로드 실패")
+        seen.append(m.id)
+
+    st = run(catchup(Client([ch]), [1], cur, handler, retry_queue=rq, delay=0))
+    assert seen == [11] and cur.get(1) == 11
+    assert len(rq) == 0 and st.failed == 0
+    assert st.stopped_by == "SyncAborted" and st.stopped_at == ("1", "12") and not st.llm_unavailable
+    assert "SyncAborted → catchup 중단" in capsys.readouterr().out
+
+
+def test_list_failed_in_retry_queue_stops_without_attempt_bump(store):
+    from dalwiki_client.client import ListFailed
+    cur, rq = store
+    cur.set(1, 11)
+    rq.push(1, 11, "earlier")
+    ch = Channel(1, [Msg(11, "a"), Msg(12, "b")])
+
+    def handler(m):
+        raise ListFailed("T", 503)
+
+    st = run(catchup(Client([ch]), [1], cur, handler, retry_queue=rq, delay=0))
+    assert st.stopped_by == "ListFailed" and rq.items[0]["attempts"] == 1
+    assert cur.get(1) == 11                                        # 채널 처리 자체를 안 함
+
+
+def test_stop_on_custom_set_and_old_behavior(store):
+    from botkit.sync import SyncAborted
+    cur, rq = store
+    cur.set(1, 10)
+    ch = Channel(1, [Msg(11, "DOWN")])
+
+    def handler(m):
+        raise SyncAborted("x")
+
+    # stop_on 에서 빼면 구 동작(재시도 큐 + 커서 전진). LLMUnavailable 은 항상 포함
+    st = run(catchup(Client([ch]), [1], cur, handler, retry_queue=rq, delay=0, stop_on=()))
+    assert st.failed == 1 and len(rq) == 1 and cur.get(1) == 11

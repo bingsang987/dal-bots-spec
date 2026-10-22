@@ -4,8 +4,8 @@
 하나로 모은다. 핵심 차이:
 
   - **메시지별 handler 가 성공한 뒤에만 커서를 그 메시지로 전진**한다.
-  - handler 가 `LLMUnavailable`(크레딧/인증/과부하)을 던지면 **그 자리에서 멈춘다** — 커서 전진 없음,
-    남은 채널도 건너뜀, alert 1회. 다음 run 이 같은 자리부터 다시 처리한다(10-03 12메시지 영구 누락 재발 방지).
+  - handler 가 `LLMUnavailable`(크레딧/인증/과부하)이나 dal.wiki 장애(`SyncAborted`/`ListFailed`) — `stop_on` —
+    를 던지면 **그 자리에서 멈춘다** — 커서 전진 없음, 재시도 큐 미삽입, 남은 채널도 건너뜀, alert 1회. 다음 run 이 같은 자리부터 다시 처리한다(10-03 12메시지 영구 누락 재발 방지).
   - 그 외 예외(파싱 실패 등 메시지 1건 문제)는 **재시도 큐 파일**에 넣고 커서는 전진시킨다.
     다음 catchup 시작 시 큐를 먼저 처리하고, 성공하면 제거, `max_attempts` 초과면 alert 후 폐기.
   - `run_catchup_once()` 는 on_ready 에서 catchup 을 `try/finally: client.close()` 로 감싸 봇이
@@ -33,12 +33,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Optional
 
+from dalwiki_client.client import ListFailed
+
 from .llm import LLMUnavailable
 from .run import alert
+from .sync import SyncAborted
 
 logger = logging.getLogger("botkit.discord")
 
 Handler = Callable[[Any], Awaitable[Any] | Any]
+
+# handler 가 던지면 "메시지 1건 실패"가 아니라 run 전체 중단(커서 유지·재시도 큐 미삽입·alert)인 예외들.
+# dal.wiki 장애(SyncAborted/ListFailed)를 메시지 실패로 세면 장애가 길 때 max_attempts 초과로 영구 누락된다(.69).
+DEFAULT_STOP_ON: tuple[type[BaseException], ...] = (LLMUnavailable, SyncAborted, ListFailed)
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +163,8 @@ class CatchupStats:
     first_run_channels: int = 0
     llm_unavailable: bool = False
     timed_out: bool = False   # run_catchup_once: on_ready 미도달(ready_timeout) → catchup 생략, 커서 유지
-    stopped_at: Optional[tuple[str, str]] = None   # (channel_id, message_id) LLM 불가로 멈춘 자리
+    stopped_at: Optional[tuple[str, str]] = None   # (channel_id, message_id) 중단 예외로 멈춘 자리
+    stopped_by: Optional[str] = None               # 중단 예외 이름(LLMUnavailable / SyncAborted / ListFailed …)
     errors: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -166,6 +174,8 @@ class CatchupStats:
             s += f" first_run={self.first_run_channels}"
         if self.llm_unavailable:
             s += f" LLM_UNAVAILABLE stopped_at={self.stopped_at}"
+        elif self.stopped_by:
+            s += f" STOPPED({self.stopped_by}) stopped_at={self.stopped_at}"
         if self.timed_out:
             s += " READY_TIMEOUT"
         return s
@@ -177,9 +187,20 @@ async def _call_handler(handler: Handler, msg) -> None:
         await res
 
 
+def _stop(stats: CatchupStats, e: BaseException, ch_id, mid, where: str) -> None:
+    """중단 예외 기록 + alert 한 줄."""
+    stats.stopped_by = type(e).__name__
+    stats.stopped_at = (str(ch_id), str(mid))
+    if isinstance(e, LLMUnavailable):
+        stats.llm_unavailable = True
+        alert(f"LLM 불가 → catchup 중단{where} msg={mid}: {e.reason}")
+    else:
+        alert(f"{type(e).__name__} → catchup 중단{where} msg={mid}: {' '.join(str(e).split())[:200]}")
+
+
 async def _process_retry_queue(client, queue: RetryQueue, handler: Handler, stats: CatchupStats,
-                               delay: float) -> bool:
-    """큐 처리. LLM 불가로 멈추면 False."""
+                               delay: float, stop_on: tuple = DEFAULT_STOP_ON) -> bool:
+    """큐 처리. 중단 예외(stop_on)로 멈추면 False."""
     for it in list(queue.items):
         ch_id, mid = int(it["channel_id"]), int(it["message_id"])
         if int(it.get("attempts", 0)) >= queue.max_attempts:
@@ -208,10 +229,8 @@ async def _process_retry_queue(client, queue: RetryQueue, handler: Handler, stat
             await _call_handler(handler, msg)
             queue.remove(ch_id, mid)
             stats.retried_ok += 1
-        except LLMUnavailable as e:
-            stats.llm_unavailable = True
-            stats.stopped_at = (str(ch_id), str(mid))
-            alert(f"LLM 불가 → catchup 중단(재시도 큐 처리 중) ch={ch_id} msg={mid}: {e.reason}")
+        except stop_on as e:
+            _stop(stats, e, ch_id, mid, f"(재시도 큐 처리 중) ch={ch_id}")
             return False
         except Exception as e:
             queue.push(ch_id, mid, repr(e))
@@ -232,6 +251,7 @@ async def catchup(
     delay: float = 1.0,
     skip_bots: bool = False,
     first_run: str = "mark_latest",
+    stop_on: tuple[type[BaseException], ...] = DEFAULT_STOP_ON,
 ) -> CatchupStats:
     """각 채널의 커서 이후 메시지를 오래된 것부터 handler 에 넘긴다.
 
@@ -247,10 +267,13 @@ async def catchup(
         skip_bots: True 면 msg.author.bot 메시지는 handler 호출 없이 커서만 전진.
         first_run: 커서 없을 때 "mark_latest"(최신 메시지를 커서로 저장만, gachabot 방식) |
             "process_recent"(limit 건 처리).
+        stop_on: handler 가 던지면 run 전체 중단(커서 유지·재시도 큐 미삽입·alert)할 예외 집합.
+            기본 (LLMUnavailable, SyncAborted, ListFailed). LLMUnavailable 은 항상 중단으로 다룬다.
     """
+    stop_on = tuple(stop_on) if LLMUnavailable in tuple(stop_on) else (LLMUnavailable, *stop_on)
     stats = CatchupStats()
     if retry_queue is not None:
-        ok = await _process_retry_queue(client, retry_queue, handler, stats, delay)
+        ok = await _process_retry_queue(client, retry_queue, handler, stats, delay, stop_on)
         if not ok:
             return stats
 
@@ -292,10 +315,8 @@ async def catchup(
                 continue
             try:
                 await _call_handler(handler, m)
-            except LLMUnavailable as e:
-                stats.llm_unavailable = True
-                stats.stopped_at = (str(ch_id), str(m.id))
-                alert(f"LLM 불가 → catchup 중단, 커서 유지 #{name} msg={m.id}: {e.reason}")
+            except stop_on as e:
+                _stop(stats, e, ch_id, m.id, f", 커서 유지 #{name}")
                 logger.info(stats.summary())
                 return stats
             except Exception as e:
