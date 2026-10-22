@@ -55,3 +55,5 @@
 {"id":"int-9a18d28c","kind":"field_change","created_at":"2026-10-16T03:18:27.2384612Z","actor":"gaminggamer69","issue_id":"dalbots-bmi.17","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-bb285b98","kind":"field_change","created_at":"2026-10-16T04:58:44.9494284Z","actor":"gaminggamer69","issue_id":"dalbots-bmi.18","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-432537fa","kind":"field_change","created_at":"2026-10-16T05:26:49.4110537Z","actor":"gaminggamer69","issue_id":"dalbots-bmi.45","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"W3 이식 완료 (laftelbot 61d28fc)"}}
+{"id":"int-07d4a22a","kind":"field_change","created_at":"2026-10-16T05:58:26.3668624Z","actor":"gaminggamer69","issue_id":"dalbots-bmi.40","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-14f83941","kind":"field_change","created_at":"2026-10-16T07:23:49.3524022Z","actor":"gaminggamer69","issue_id":"dalbots-bmi.43","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
