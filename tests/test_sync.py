@@ -616,3 +616,17 @@ def test_allow_empty_still_respects_incomplete_and_mass_guard(engine, fake_dal, 
     st = engine.sync([], allow_empty=True)
     assert st.absent_skipped == "mass_absent" and st.deleted == 0       # 12 > max(10, 0.3×12)
     assert len(fake_dal.events) == 12
+
+
+# ── .216 clear_empty_fields ──────────────────────────────────────────────
+def test_clear_empty_fields_erases_removed_description(tmp_path, fake_dal, soon):
+    for opt, expect in ((False, "<p>본문</p>"), (True, None)):
+        eng = SyncEngine(TOPIC, tmp_path / f"c{opt}.db", dry_run=False, cache_days_back=5, cache_days_forward=30,
+                         clear_empty_fields=opt)
+        eng.sync([mk("k1", f"AA{opt}", soon, description="<p>본문</p>", location="서울")])
+        eid = eng.state.get("k1").event_id
+        st = eng.sync([mk("k1", f"AA{opt}", soon)])
+        assert st.updated == 1
+        assert fake_dal.events[eid].get("description") == expect
+        st = eng.sync([mk("k1", f"AA{opt}", soon)])
+        assert st.unchanged == 1

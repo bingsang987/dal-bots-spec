@@ -239,6 +239,9 @@ SUMMARY_MAX = 100
 SUMMARY_MIN = 2
 DESCRIPTION_MIN = 2
 LOCATION_MAX = 64
+# events/update 가 null 로 지울 수 있는 필드(OpenAPI: description/location/link/rrule 은 string|null).
+# 빈 문자열은 서버 400(minLength 2 / uri) → 지울 땐 반드시 null. dalbots-bmi.216
+CLEARABLE_FIELDS = {"description": "description", "location": "location", "link": "link", "rrule": "rrule"}
 
 
 def _guard_summary(summary) -> str:
@@ -448,12 +451,23 @@ def update_event(
     location: Optional[str] = None,
     category_id: Optional[str] = None,
     rrule: Optional[str] = None,
+    *,
+    clear_empty: Iterable[str] = (),
 ) -> tuple[bool, int]:
     """events/update (partial). 신 API는 id만 필수. (성공여부, status_code) 반환.
+
+    None 인 필드는 보내지 않는다(서버 값 유지). description 2자 미만·빈 location 도 생략된다.
+
+    clear_empty: 지울 수 있는 필드 이름("description"·"location"·"link"·"rrule") 중, 이번 값이 None/빈 값
+        (가드 후)이면 **null 을 보내 서버 값을 지울** 필드. 기본 ()= 구 동작(빈 값은 생략 → 서버 값 잔존).
+        소스에서 비운 본문·장소·링크를 미러에서도 지워야 하는 호출자만 쓴다(.216).
 
     status_code == 404면 호출자가 fallback POST를 해야 한다.
     update_or_create_event를 쓰면 자동 처리.
     """
+    unknown = set(clear_empty) - set(CLEARABLE_FIELDS)
+    if unknown:
+        raise ValueError(f"clear_empty 는 {sorted(CLEARABLE_FIELDS)} 중에서: {sorted(unknown)}")
     body: dict = {"id": event_id}
     if summary is not None:
         body["summary"] = _guard_summary(summary)
@@ -482,6 +496,10 @@ def update_event(
         body["categoryId"] = category_id
     if rrule is not None:
         body["rrule"] = rrule
+    for name in clear_empty:
+        api = CLEARABLE_FIELDS[name]
+        if api not in body:
+            body[api] = None
 
     resp = _post("/events/update", body)
     if not resp:

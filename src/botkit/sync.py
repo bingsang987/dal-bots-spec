@@ -353,6 +353,7 @@ class SyncEngine:
         max_absent: Optional[int] = None,
         alert_absent: bool = True,
         protect_human_absent: bool = False,
+        clear_empty_fields: bool = False,
     ):
         """
         Args:
@@ -380,6 +381,9 @@ class SyncEngine:
                 사람이 만들었거나(입양) 고친 이벤트는 DELETE 대신 state 행만 지운다(`HUMAN_KEEP`, stats.human_kept —
                 이벤트는 사람 것으로 남고 봇은 더 관리하지 않음). histories 조회 실패면 그 행은 이번 run 삭제 보류
                 (failed+1, state 그대로). 삭제 후보마다 histories 1회 호출.
+            clear_empty_fields: True 면 PATCH 때 Event 의 description·location·link 가 비어 있으면 null 로 보내
+                서버 값을 지운다(.216). 기본 False = 빈 값은 생략(서버 값 잔존 — 소스에서 비운 본문이 미러에 남음).
+                켜면 사람이 손으로 넣은 본문도 다음 PATCH 에서 지워지므로 protect_human_edits 와 같이 쓰는 게 안전.
         """
         if absent not in ("keep", "delete"):
             raise ValueError(f"absent 정책은 keep|delete: {absent!r}")
@@ -399,6 +403,7 @@ class SyncEngine:
         self.max_absent = max_absent
         self.alert_absent = alert_absent
         self.protect_human_absent = protect_human_absent
+        self.clear_empty_fields = clear_empty_fields
         self._dry_run = dry_run
         self.state = state or SyncState(state_path, topic_id)
         self.log = log or logger
@@ -446,6 +451,12 @@ class SyncEngine:
             return
         self.state.put(ev.key, event_id, h, dw._guard_summary(ev.summary), ev.start_iso())
 
+    def _update_kwargs(self, ev: Event) -> dict:
+        kw = ev.write_kwargs()
+        if self.clear_empty_fields:
+            kw["clear_empty"] = ("description", "location", "link")
+        return kw
+
     def _fail(self, stats: SyncStats, msg: str) -> None:
         stats.failed += 1
         stats.failures.append(msg)
@@ -489,7 +500,7 @@ class SyncEngine:
             stats.protected += 1
             self.log.info(f"PROTECTED(사람 편집) {ev.key} {event_id} → PATCH 생략")
             return True
-        ok, sc = dw.update_event(event_id, **ev.write_kwargs())
+        ok, sc = dw.update_event(event_id, **self._update_kwargs(ev))
         if ok:
             self._save(ev, event_id, h)
             setattr(stats, counter, getattr(stats, counter) + 1)
@@ -501,7 +512,7 @@ class SyncEngine:
         # 404 → 캐시 복구
         alt = self._lookup(ev)
         if alt and alt != event_id:
-            ok2, sc2 = dw.update_event(alt, **ev.write_kwargs())
+            ok2, sc2 = dw.update_event(alt, **self._update_kwargs(ev))
             if ok2:
                 self._save(ev, alt, h)
                 stats.recovered += 1
@@ -546,7 +557,7 @@ class SyncEngine:
             stats.protected += 1
             self.log.info(f"PROTECTED(사람 편집) {ev.key} {alt} → PATCH 생략")
             return True
-        ok, sc = dw.update_event(alt, **ev.write_kwargs())
+        ok, sc = dw.update_event(alt, **self._update_kwargs(ev))
         if not ok:
             self._fail(stats, f"update(복구 id) 실패 key={ev.key} id={alt} status={sc}")
             return True

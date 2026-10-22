@@ -226,3 +226,33 @@ def test_list_events_short_window_single_call(monkeypatch):
     monkeypatch.setattr(C, "_post", lambda path, body, retries=3: (calls.append(1), {"status": 200, "body": []})[1])
     C.list_events("T", from_="2025-06-01T00:00:00.000Z", to="2025-07-15T00:00:00.000Z")
     assert len(calls) == 1
+
+
+# ── .216 update_event clear_empty ────────────────────────────────────────
+def test_update_event_default_omits_empty_fields(fake_dal, soon):
+    eid = fake_dal.add_event("T", "AA", soon, description="<p>본문</p>", location="서울", link="https://x")
+    ok, _ = dw.update_event(eid, description="", location=" ", link=None)
+    body = fake_dal.paths("/events/update")[-1]
+    assert ok and set(body) == {"id"}
+    assert fake_dal.events[eid]["description"] == "<p>본문</p>"
+
+
+def test_update_event_clear_empty_sends_null(fake_dal, soon):
+    eid = fake_dal.add_event("T", "AA", soon, description="<p>본문</p>", location="서울", link="https://x")
+    ok, _ = dw.update_event(eid, description=" ", location="", link=None,
+                            clear_empty=("description", "location", "link"))
+    body = fake_dal.paths("/events/update")[-1]
+    assert ok and body == {"id": eid, "description": None, "location": None, "link": None}
+    assert fake_dal.events[eid]["description"] is None
+
+
+def test_update_event_clear_empty_keeps_real_values(fake_dal, soon):
+    eid = fake_dal.add_event("T", "AA", soon)
+    dw.update_event(eid, description="<p>새 본문</p>", clear_empty=("description", "link"))
+    body = fake_dal.paths("/events/update")[-1]
+    assert body == {"id": eid, "description": "<p>새 본문</p>", "link": None}
+
+
+def test_update_event_clear_empty_rejects_unknown_field(fake_dal):
+    with pytest.raises(ValueError):
+        dw.update_event("e", clear_empty=("summary",))
