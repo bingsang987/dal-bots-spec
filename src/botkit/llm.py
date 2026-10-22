@@ -286,7 +286,11 @@ def _request(
         else:
             kwargs["system"] = system
     if temperature is not None:
-        kwargs["temperature"] = temperature
+        if thinks_by_default(model) and temperature != 1:
+            # thinking 기본 모델은 temperature=1 만 허용(그 외 400, 비재시도 → 봇 크래시). 무시하고 경고(.72).
+            logger.warning(f"temperature={temperature} 무시 — thinking 기본 모델 {model} 은 temperature 1 만 허용")
+        else:
+            kwargs["temperature"] = temperature
 
     cl = client or _client(api_key)
     last_exc: Optional[Exception] = None

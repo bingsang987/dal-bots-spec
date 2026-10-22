@@ -259,3 +259,16 @@ def test_llm_json_with_images_builds_content_blocks():
     content = cl.calls[0]["messages"][0]["content"]
     assert [c["type"] for c in content] == ["image", "image", "text"]
     assert content[1]["source"] == {"type": "url", "url": "https://example.com/a.png"}
+
+
+# W8-0 .72 — thinking 기본 모델에 temperature → 무시 + 경고(400 크래시 방지)
+def test_temperature_dropped_for_thinking_model(caplog):
+    cl = FakeClient(['{"a": 1}', '{"a": 2}', '{"a": 3}'])
+    with caplog.at_level("WARNING", logger="botkit.llm"):
+        assert llm_json("q", model=SONNET, temperature=0.2, client=cl) == {"a": 1}
+    assert "temperature" not in cl.calls[0]
+    assert any("temperature=0.2 무시" in r.getMessage() for r in caplog.records)
+    llm_json("q", model=SONNET, temperature=1, client=cl)                  # 1 은 허용
+    assert cl.calls[1]["temperature"] == 1
+    llm_json("q", model="claude-3-5-haiku-20241022", temperature=0.2, client=cl)   # 비-thinking 모델은 그대로
+    assert cl.calls[2]["temperature"] == 0.2
