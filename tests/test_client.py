@@ -156,3 +156,25 @@ def test_dry_run_reads_hit_server_but_writes_do_not(monkeypatch):
     assert new_id.startswith("dry-")
     assert dw.delete_event("real-1") is True
     assert [u for u, _ in sess.posts] == [f"{dw.API_BASE}/events/list"]   # 쓰기 2건은 서버에 안 갔다
+
+
+# W8-0 .73 — DALWIKI_DISCORD_NOTIFY 액션 필터
+def test_discord_notify_action_filter(monkeypatch):
+    from dalwiki_client import discord_notify as dn
+    queued = []
+    monkeypatch.setattr(dn, "WEBHOOK_URL", "https://discord.test/hook")
+    monkeypatch.setattr(dn, "_ensure_worker", lambda: None)
+    monkeypatch.setattr(dn._queue, "put_nowait", lambda item: queued.append(item["action"]))
+    monkeypatch.delenv("DALWIKI_DISCORD_NOTIFY", raising=False)
+    for path in ("/events/create", "/events/update", "/events/delete"):
+        dn.enqueue(path, {"id": "x"}, {})
+    assert queued == ["CREATE", "UPDATE", "DELETE"]                # 미설정 = 구 동작(전부)
+    queued.clear()
+    monkeypatch.setenv("DALWIKI_DISCORD_NOTIFY", "create, Delete")
+    for path in ("/events/create", "/events/update", "/events/delete"):
+        dn.enqueue(path, {"id": "x"}, {})
+    assert queued == ["CREATE", "DELETE"]
+    queued.clear()
+    monkeypatch.setenv("DALWIKI_DISCORD_NOTIFY", "none")
+    dn.enqueue("/events/create", {"id": "x"}, {})
+    assert queued == []

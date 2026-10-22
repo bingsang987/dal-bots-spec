@@ -3,7 +3,9 @@
 Fires a Discord webhook whenever the shared client successfully completes
 `/events/create`, `/events/update`, or `/events/delete`. Inert when
 `DALWIKI_DISCORD_WEBHOOK_URL` is unset, so this module imposes zero cost
-on bots that do not opt in.
+on bots that do not opt in. `DALWIKI_DISCORD_NOTIFY=create,delete` limits
+which write actions are announced (unset = all). `send_alert()` posts a
+botkit `[HEALTH-ALERT]` to the same webhook (not filtered).
 
 Design:
 - Worker thread + queue: notifications never block the bot's foreground
@@ -59,6 +61,15 @@ def is_enabled() -> bool:
     return bool(WEBHOOK_URL)
 
 
+def _notify_actions() -> frozenset[str]:
+    """`DALWIKI_DISCORD_NOTIFY=create,delete` 처럼 알릴 쓰기 액션을 고른다(.73). 미설정/빈 값 = 전부(구 동작),
+    `none` = 쓰기 알림 끔(alert 는 별개로 계속 감). 호출 시점 환경변수를 읽는다."""
+    raw = os.environ.get("DALWIKI_DISCORD_NOTIFY", "").strip()
+    if not raw:
+        return frozenset(_NOTIFY_PATHS.values())
+    return frozenset(a.strip().upper() for a in raw.split(",") if a.strip()) & frozenset(_NOTIFY_PATHS.values())
+
+
 def _alert_webhook_url() -> str:
     """alert 용 웹훅 URL. import 뒤에 .env 를 로드하는 봇도 있어 호출 시점 환경변수도 본다."""
     return WEBHOOK_URL or os.environ.get("DALWIKI_DISCORD_WEBHOOK_URL", "").strip()
@@ -93,7 +104,7 @@ def enqueue(path: str, body: dict, resp_body) -> None:
     if not WEBHOOK_URL:
         return
     action = _NOTIFY_PATHS.get(path)
-    if action is None:
+    if action is None or action not in _notify_actions():
         return
     _ensure_worker()
     try:
