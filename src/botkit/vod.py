@@ -590,7 +590,8 @@ def resolve_starts(
 def group_by_live(vods: list[dict], max_gap_minutes: int = 60) -> int:
     """같은 live_open_ms 인 VOD = 한 방송(분할편). in-place 정렬 + series 메타. 분할편(머리 제외) 수 반환.
 
-    정렬: (live_open_ms 또는 start_ms, publishDateAt). 묶음 머리(head)는 제목의 'N부' 최솟값,
+    정렬: (live_open_ms 또는 start_ms, 'N부', publishDateAt) — 같은 방송 안에서는 1부·2부 순(라벨 순서).
+    묶음 머리(head)는 제목의 'N부' 최솟값,
     없으면 publishDateAt 최솟값 — 2부가 1부보다 먼저 공개돼도 1부가 머리다(1부가 아직 없으면 2부가 머리).
     머리 아닌 분할편: _series_part=True, _series_head=머리 videoNo, _orig_est_start_ms=옛 추정(기존 메타와 호환).
     start_ms 는 resolve_starts 가 이미 live_open_ms 로 맞춰 두었다.
@@ -603,7 +604,8 @@ def group_by_live(vods: list[dict], max_gap_minutes: int = 60) -> int:
     for v in vods:
         if "start_ms" not in v:
             v["start_ms"] = v.get("live_open_ms") or _est_start_ms(v)
-    vods.sort(key=lambda v: (v.get("live_open_ms") or v["start_ms"], v.get("publishDateAt") or 0))
+    vods.sort(key=lambda v: (v.get("live_open_ms") or v["start_ms"], split_part(v.get("videoTitle")) or 0,
+                             v.get("publishDateAt") or 0))
     grouped = 0
 
     by_live: dict[int, list[dict]] = {}

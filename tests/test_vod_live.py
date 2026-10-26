@@ -176,6 +176,7 @@ def test_group_by_live_part2_published_first_head_is_part1(conn):
     assert "_series_head" not in p1
     assert p1["start_ms"] == p2["start_ms"] == LIVE_1021
     assert p2["_orig_est_start_ms"] == p2["_est_start_ms"]
+    assert vods == [p1, p2]                                     # 같은 방송 안에서는 1부 먼저(라벨 순서)
 
 
 def test_group_by_live_only_part2_known_is_its_own_head(conn):
