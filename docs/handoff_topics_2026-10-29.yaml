@@ -1,0 +1,537 @@
+- group: anime
+  bot: animebot
+  name: 부탁해 아이프리
+  description: 부탁해 아이프리 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/EGbs4XdQvXRbjQEU-zXj5_DD9Er9S-IkTKJGpXZEscgXeVWK3eOg3O9rHiCcfOmlNJO-kyH27PS9yq9ENdhOO6lEnL8T5YA-tcH0ziC4lF0Aguhow54iQ3VfDATQBO0NTkUMZZ3JsYK10H_M7Rvcjw.jpg
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: MsF6hq7EXXJ8
+  category_ids:
+    TV: MA53mpET-U7F
+    스트리밍: hZ_xSTqXzyuz
+    극장판: I3nSKVSWoJJL
+    OVA: U4L5qGN80kT-
+    특별편: _53kysi7y4Aj
+- group: anime
+  bot: animebot
+  name: 리락쿠마
+  description: 리락쿠마 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/vs48wXeZJifiLaPRpAIDiZg2jVRUST8vrZwLDdjSy7T0lOEZGV8MBFCV36Pmz__pgYERDW-wKL0J7dlm7WsH-AllNrUsSAH9-b2F2JO4BpwrMJw2Q7OPyxCXp9LqI4PQZ-DGXwhdNugbi4js4ekm8Q.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: i-NgVh1cpiUF
+  category_ids:
+    TV: HhaCK770zxCa
+    스트리밍: e8BX0Fl9HTfY
+    극장판: XimffcI2gD7o
+    OVA: FkGx2r3o985y
+    특별편: 1SnLOrD5pDv_
+- group: anime
+  bot: animebot
+  name: 베이블레이드X
+  description: 베이블레이드X 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/-pwwQXxgsuJdvGAynjYRG9kLm9uFo1mu9xbwTxCb9esJzRKSBaP4nG-4TlvcLQy4hlMMew-eycKPMEnO7AUATVvuXlhev8X3p7CkL31xR4FuY07mxCVhQITenFORjVdU7Ug1tlEvviW0h6DJ0dBKRQ.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: 1ZIpVPssZ1P6
+  category_ids:
+    TV: cNnz4zqce4Bx
+    스트리밍: WFSOiBaLYw-u
+    극장판: abxTO9UP6RGw
+    OVA: IsZ3F3wc4I6u
+    특별편: yXKQfkSdYhDW
+- group: anime
+  bot: animebot
+  name: 배틀 스피리츠 [Re] 절계의 하늘
+  description: 배틀 스피리츠 [Re] 절계의 하늘 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/L-JVjs493fAw3o5SXsaxh-l_DrH0_RNKsmf_bCJqnSt2Pw0y81iocfni9MDhF9AolFfop6y7yxRrU1LuDmBsJg-Y9OJ4_gS2QXfhpDN63BZTqv3cQqN_tj6XnEcR3mj7Y6VzTKhPsPhvkLb3xFsuYw.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: uPJ4Tby3psWG
+  category_ids:
+    TV: qnAgCidibGHU
+    스트리밍: R-o9kx26Xlyt
+    극장판: iO1bQDx5aeGH
+    OVA: 6qF0WM94kcHG
+    특별편: J41-T7nbtEdE
+- group: anime
+  bot: animebot
+  name: 약사의 혼잣말
+  description: 약사의 혼잣말 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/0aiJXCoGwzNHpOy9tXAX5ZNcu9k7mE4txoqFdDZNX3B3KMDNbu4Jf-_e9VQFkZqCDtdcPSu6F-1195jLgdRWWYmBprg5D-NMTb1Ws63cY1JxOiwCKcUu_8-F21o8vN09Kl96x3nuh33SyF8gu3jH-w.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: A4ciRl-UQtD3
+  category_ids:
+    TV: SjKbPznPWnoF
+    스트리밍: RYezLA5JkpcV
+    극장판: 2FCe1TDutlfb
+    OVA: lEul5bR2kfS4
+    특별편: 6PBc9GLFbtYa
+- group: anime
+  bot: animebot
+  name: 도원암귀
+  description: 도원암귀 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/dVgx9qwNukCL4lqNNr06khImJQ79-z8KP2Kv3nIckADEDxavwZruEvw9-sAHU0zTo570x6Py0XPqGGRL2MDBu_0ftc88anQYIE_NsgrOD9h4FnUnyZ9DplrvfbFphYjNJ7HUuBAvjGJZc4RZ5MvZbg.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: HrbCVAs98w5k
+  category_ids:
+    TV: 2oM4p6AVo_Kc
+    스트리밍: gRNXH1_cFYu5
+    극장판: wAgH0qNtKSng
+    OVA: utZ5hKu7TDpQ
+    특별편: 2WJwcd_GpFWr
+- group: anime
+  bot: animebot
+  name: 드래곤볼
+  description: 드래곤볼 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/TDYNYsLr7XrzLFJASJgmq33VHoD30Gkdu2LcdNq1X6XxJA0wuih2dQ2UIHySRdgC1efpGOp5Za0wEFcOv75Lo5ypCugTTl1VZ7-btGwMdZkwA7Hco6-7vbRnpZyg8HNoyf7lmjD6rMAvUnOEz0lQAg.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: ZxlVc1HvNLpV
+  category_ids:
+    TV: FO7rsiW8ONrt
+    스트리밍: RwWQsfKCI1v0
+    극장판: LIB58VDZZAnt
+    OVA: 2cdaizc5PXaA
+    특별편: 1JzXW9_F6HOd
+- group: anime
+  bot: animebot
+  name: 하늘은 붉은 강가
+  description: 하늘은 붉은 강가 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/5lmnAIWser27iEzbjMk1Rp2xs_WvTOCoOXucxjS4pkpthKYaoRhzpv9YvFSMq_OItXGTTu5hH7ExdasFD1x6n8ky8uHZ0HbdpfDVssicBr_EDLlbGr2q1SF8MlNsdYjB7-_rN-FBEf8oucqwWhdvPw.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: xXTNni6cyyvU
+  category_ids:
+    TV: wG8f53A_CuHx
+    스트리밍: J8aI6CtOhGYl
+    극장판: jXz24c8XwmpY
+    OVA: hFK25yTSyrNc
+    특별편: gaW_oLmaEzko
+- group: anime
+  bot: animebot
+  name: 치토세 군은 라무네 병 속에
+  description: 치토세 군은 라무네 병 속에 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/ZqKumTvTFqbu1ufEaqV0h5y018C07Jyn1uTzy2xhbjvFmqXl_2OczjmG4UszZUTQLZ1gD0pDSZ4U9eW__mtSE_g6kgWQpkK8a3zW6Dj26GYeyAzIr-gRjEir24-Awp-1hpMTL074OXx8fcTsqGqNEA.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: wXM0zJRkja_I
+  category_ids:
+    TV: 31YVTbw1Et5x
+    스트리밍: QgtoRiZ1YB0s
+    극장판: hljDOD5Zhf15
+    OVA: djpazANK8qnM
+    특별편: m_ARcIHAsZXO
+- group: anime
+  bot: animebot
+  name: 다이아몬드 에이스
+  description: 다이아몬드 에이스 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/LDwezXe2c-Gt0JqnrXN6GttyRMRTVQkWCfGnqFGFT3TWjiIZDRFw0BEvfntLeJoEpOP6P1TPhHDoPoB2r5vtnN4O0ue_AtV3BIYuq3t8kdoV8hGaD5qJEPFfMsA66fKQI25K-7ldg-6ck-Y7qNGXAg.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: Dm8S3AhTWUoc
+  category_ids:
+    TV: 2cHUd2puOowq
+    스트리밍: FhDcAz0scyMz
+    극장판: UpghoiRC4jM5
+    OVA: 6o9R9QEp7yp3
+    특별편: MdhV3ooPu4qF
+- group: anime
+  bot: animebot
+  name: 템빨 애니메이션
+  description: 템빨 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/kFPk9q-GZuT7oW-KSJWPa72Fm9JXRHOkPEDZbWuATec_C6i6iyiVGk0Ty2JRUjltZISKllG8JnuF3rGJ5t-XWK963rARGGLBKSzoK5yzfTas4-rKjXrWp26Aj8p-3_KrP08DcKBIDOVvja2l2jg3tg.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: 4kGgbLrtU6kW
+  note: dal.wiki 토픽명 3자 이상 제약으로 '애니메이션' 접미
+  category_ids:
+    TV: QZD-TZXMhkhi
+    스트리밍: vwWkg0Y0Rb1r
+    극장판: tOMh-f6IrH-E
+    OVA: _1GM_XCIbZsv
+    특별편: Gx9lfpCFmaM6
+- group: anime
+  bot: animebot
+  name: '스틸 볼 런: 죠죠의 기묘한 모험'
+  description: '스틸 볼 런: 죠죠의 기묘한 모험 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)'
+  thumbnail: https://i.namu.wiki/i/3wnkHEaNRxvgPEHQ317vYjNmmuPRFQPE_XoL7FmT0BW6HorDFPVXNF0xfb1KusRce9biq2IRTuMmmyQrVhP2ZZ6kpoVXIOnCvcm6o_oD6MeXXtRLc5N4kB6ex98Qhx7fxxJXS2we4ttIJEECBqhHuA.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: z_DBbbVCfTOd
+  category_ids:
+    TV: agUGt1KBZ60Y
+    스트리밍: 2f-Kr8bst78D
+    극장판: F9d7EudgJqUa
+    OVA: GwXEJijv43yJ
+    특별편: HahpKIZlTGWx
+- group: anime
+  bot: animebot
+  name: '사이버펑크: 엣지러너'
+  description: '사이버펑크: 엣지러너 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)'
+  thumbnail: https://i.namu.wiki/i/bn98arBc1pFQlXShzCGkjs-L4uO33PLBXVwTueyluV9OyKu_9c_bspAdg8n7BZqEpvwMRx66fdWoz3uprRNqpQMOz42IMf1vk_YPGSMo5ay9Ay4KG4y-T7DCUE6gIYIupjYLE4s2nOdCW2ue_954xA.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: i60ALiI_W1On
+  category_ids:
+    TV: ncERKeyrzkd5
+    스트리밍: 0-YmHJV6qNal
+    극장판: ugY2xiZgkD-v
+    OVA: oL8Eg-OKAxz7
+    특별편: vgd1J90Ul0VV
+- group: anime
+  bot: animebot
+  name: 블랙 클로버
+  description: 블랙 클로버 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/H2XIaaggptfB0qKVfMpZuqT0zyl8qnvXPb6k1_RFietq0c20e8rpd94E1dbxtbENVoV0PcucfY_UnkPAOm81keaNKT9N4zNSgnUL7pib8cAkYu9jAMOhRw4gvpDby_Tk6VuAHjGF0zkew0BXGCIgjA.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: sN_csP7MZIdP
+  category_ids:
+    TV: NM8hhJHZwER-
+    스트리밍: LVu3Vd2fbsXR
+    극장판: WlZCeo72YRbT
+    OVA: MWhPOdW2_aUt
+    특별편: BSF2MVwx2J3F
+- group: anime
+  bot: animebot
+  name: 란마 1/2
+  description: 란마 1/2 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/xmsj6l5NWhhG70xU9gPuDExtUY2sUWsO-HeTj4bRU6GaDsqqT5WGpyM0oNUhsJ-7tKDnJXmzcb_jWO4IAbUOFg4UXEufEaA7dZFP7o0EjE2JcLmYr2n2-iJOU1NpwScP1QkdFZLhBkZw47zpMN8FRQ.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: iCbwmj8CKOox
+  category_ids:
+    TV: udqlz__zO02f
+    스트리밍: Ga9qpYq8PKVk
+    극장판: gvRppQRv_qdU
+    OVA: yrzCFZ6P4UwP
+    특별편: Ngrb0b1nTTnu
+- group: anime
+  bot: animebot
+  name: 얼음 성벽
+  description: 얼음 성벽 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/VW-9Fqb9h_9o1i4bYxfG2M_-f92wn-jdApiJpeg1ZV8hWGEH5OtF3msEKMxsPzg5W1-WE_2lZqUU_fJ0SaBrFeo53ms1EXfTnT3_aMWeCE4coQVF57pXUERJEOSSlBae-QooqHx4s8x3H9uesM_3PQ.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: PDf8MuvH4B_D
+  category_ids:
+    TV: TGdV77sAuTgF
+    스트리밍: IhLzJgM9UEsI
+    극장판: LX5oZ_8gbltH
+    OVA: c0eNPHjGuQx_
+    특별편: 4ns7WRTC2cWU
+- group: anime
+  bot: animebot
+  name: 푸른 상자
+  description: 푸른 상자 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/MfQaMsXsnv9YTyC1bv58Tt-XohyFf7vm9aYMpsF5IEh55kIPpWzTUH54wOTCELXvlVERedF7ftXYOKffNqmD7LlmtjwPG0Gbz9JDMsi5dOTzpdIvCJ_zhCVUhHXYoDB3Mb4TBGHtsATnH_4-VEeWgw.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: DzelTPGltsxV
+  category_ids:
+    TV: sXrLByC99Sni
+    스트리밍: -6oUlubEm3Nt
+    극장판: iKpl_gcH9dIM
+    OVA: eycBuwrnsRVv
+    특별편: Z14hSrwnstcC
+- group: anime
+  bot: animebot
+  name: 도쿄 리벤저스
+  description: 도쿄 리벤저스 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/cjort1xTvRISZ3AY_cywAl7jfE8WfDmB5n5W9AG4DKOvDauuz9OvLTEfpx6AhCwuqM13a6jo8fGl6kaFQ9heAJMB8NwsuTMIbw83TnV0PkDjGX9AX8WItzpZRAHTSrzNAoyD12b9gS9K9WYJUUmZaA.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: kQRTscfS0BGr
+  category_ids:
+    TV: CIL6ANl1mlbp
+    스트리밍: DpMRIKDS4vkU
+    극장판: WPgPaKheJh1f
+    OVA: r935SOCSU8xl
+    특별편: 3a8WWYul_qOO
+- group: anime
+  bot: animebot
+  name: 탐정은 이미 죽었다
+  description: 탐정은 이미 죽었다 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/7slY0M9QlBPzEHDoGgvDcwUk2zlyd5P12iOk3Qd0e2tmpn1KDSIFnP6SrzNVKoK2hJ1narMrZLBFpBYd4TwDz3Pdu8oaTo585NMcfP75mD_F-UYz-QXnD0H0Akr3-mvul9u-zm23a9rDB-KTgcx7Nw.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: C1Lig-0aOUlD
+  category_ids:
+    TV: f6Ql4eE6HVy8
+    스트리밍: 24roV9uNIlr4
+    극장판: NmXI0jzleJHM
+    OVA: sOOVbliE8fNW
+    특별편: 1hD1g6nMyOva
+- group: anime
+  bot: animebot
+  name: 전생했더니 검이었습니다
+  description: 전생했더니 검이었습니다 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/-OqpWNaBJxGggg5IyK3O_rilHhvCFy2sQdvZH0LOcJuFpQ6xaps7doGBFsPu_YCI3i7dqbhh1i3-_jMcVKWo9tH07IWi6jB2KY9kcqqGoOL2HCsXfJqFMzRXvYi0ci_9xJQdd6DUhp3AVRGzNDPc4g.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: TuW5w5ICSRBQ
+  category_ids:
+    TV: Y60sqOCp6PcH
+    스트리밍: m3BTVByXbQ4x
+    극장판: rZQsAAjkb3ST
+    OVA: OCEDgLrNfNYP
+    특별편: DykGLP3ETsSS
+- group: player_football
+  bot: koreansoccerguysbot
+  name: 손흥민 경기 일정
+  description: 손흥민의 소속팀·국가대표 경기 일정, 한국 시각
+  thumbnail: null
+  categories:
+  - 소속팀 경기
+  - 국가대표 경기
+  id: B9oqNmFr0msp
+  category_ids:
+    소속팀 경기: HbTYHD4HqBj-
+    국가대표 경기: YjA9FeyL9IGI
+- group: player_football
+  bot: koreansoccerguysbot
+  name: 이강인 경기 일정
+  description: 이강인의 소속팀·국가대표 경기 일정, 한국 시각
+  thumbnail: null
+  categories:
+  - 소속팀 경기
+  - 국가대표 경기
+  id: _HwRYSrMQgoy
+  category_ids:
+    소속팀 경기: i7-vLirs5jVP
+    국가대표 경기: lP85_A4W3SDx
+- group: player_football
+  bot: koreansoccerguysbot
+  name: 김민재 경기 일정
+  description: 김민재의 소속팀·국가대표 경기 일정, 한국 시각
+  thumbnail: null
+  categories:
+  - 소속팀 경기
+  - 국가대표 경기
+  id: SQYpY3e5ozam
+  category_ids:
+    소속팀 경기: NMahJMNwX9nF
+    국가대표 경기: aQsXn1LYLde5
+- group: player_football
+  bot: koreansoccerguysbot
+  name: 양민혁 경기 일정
+  description: 양민혁의 소속팀·국가대표 경기 일정, 한국 시각
+  thumbnail: null
+  categories:
+  - 소속팀 경기
+  - 국가대표 경기
+  id: 0UfJVH_MpPsa
+  category_ids:
+    소속팀 경기: y_EK2axYmyOB
+    국가대표 경기: aTGTeaT3p2Qd
+- group: player_football
+  bot: koreansoccerguysbot
+  name: 황희찬 경기 일정
+  description: 황희찬의 소속팀·국가대표 경기 일정, 한국 시각
+  thumbnail: null
+  categories:
+  - 소속팀 경기
+  - 국가대표 경기
+  id: LKN3sDVX0wyX
+  category_ids:
+    소속팀 경기: 7UhGvSZNcNVL
+    국가대표 경기: TQ4fibZboGOP
+- group: player_mlb
+  bot: mlbplayersbot
+  name: 이정후 경기 일정
+  description: 이정후의 MLB 경기 일정, 한국 시각
+  thumbnail: null
+  categories:
+  - 정규시즌
+  - 포스트시즌
+  - 시범경기
+  id: I9NDMuUIBkOS
+  category_ids:
+    정규시즌: jsQOa_a791wl
+    포스트시즌: fiGb-_bgvOGU
+    시범경기: T5Z1iC7S3yzy
+- group: player_mlb
+  bot: mlbplayersbot
+  name: 김하성 경기 일정
+  description: 김하성의 MLB 경기 일정, 한국 시각
+  thumbnail: null
+  categories:
+  - 정규시즌
+  - 포스트시즌
+  - 시범경기
+  id: LkdmFasA5sRA
+  category_ids:
+    정규시즌: O_EIJvL5aGMX
+    포스트시즌: 6pg7trqUPjNA
+    시범경기: PQ9kRr0OkOS8
+- group: player_mlb
+  bot: mlbplayersbot
+  name: 김혜성 경기 일정
+  description: 김혜성의 MLB 경기 일정, 한국 시각
+  thumbnail: null
+  categories:
+  - 정규시즌
+  - 포스트시즌
+  - 시범경기
+  id: m2p0qtxBhIzT
+  category_ids:
+    정규시즌: rFfsCh5e0WEs
+    포스트시즌: altu1yesFSr-
+    시범경기: hJZSFmE6VACV
+- group: ip
+  bot: ipcalbot
+  name: 산리오 캘린더
+  description: 헬로키티·쿠로미·마이멜로디 등 산리오캐릭터즈 팝업·콜라보·편의점 출시 일정
+  thumbnail: null
+  categories:
+  - 팝업
+  - 콜라보카페
+  - 굿즈
+  - 상품 출시
+  id: vLbC-wYM6ToE
+  category_ids:
+    팝업: vBebcp3kFjPh
+    콜라보카페: d17U3xTVdMAQ
+    굿즈: wTtBUH54fM1E
+    상품 출시: GsYfP1iJIZH2
+- group: ip
+  bot: ipcalbot
+  name: 포켓몬 캘린더
+  description: 포켓몬 팝업스토어·이벤트·편의점/브랜드 콜라보 상품 출시 일정
+  thumbnail: null
+  categories:
+  - 팝업
+  - 이벤트
+  - 상품 출시
+  id: BkkG5CbRyCOa
+  category_ids:
+    팝업: 5gKCTofQSmX_
+    이벤트: g-o1xfkEhgUJ
+    상품 출시: 47NawcWaMoAs
+- group: premiere
+  bot: premierebot
+  name: 시사회 응모
+  description: 롯데시네마·CGV·메가박스 공식 시사회 응모 마감일과 당첨 발표일을 한눈에
+  thumbnail: null
+  categories:
+  - 응모마감
+  - 당첨발표
+  id: LdaiIa8ug_0u
+  category_ids:
+    응모마감: GDBQAXXO0KXi
+    당첨발표: H1cIcixHN23Q
+- group: book
+  bot: bookreleasebot
+  name: 만화 단행본 발매일
+  description: 국내 정식 출간 만화 단행본 신간 발매일 — 1권 1일정, 발매 연기 시 날짜 자동 갱신, 초판 특전 표기
+  thumbnail: null
+  categories:
+  - 만화
+  id: zWMRxFaIQe0Y
+  category_ids:
+    만화: DSdTUdoqanYD
+- group: book
+  bot: bookreleasebot
+  name: 라이트노벨 발매일
+  description: 국내 정식 출간 라이트노벨 신간 발매일 — 1권 1일정, 발매 연기 시 날짜 자동 갱신, 초판 특전 표기
+  thumbnail: null
+  categories:
+  - 라이트노벨
+  id: TL7OmN_vPFUj
+  category_ids:
+    라이트노벨: HPWUDSA_PLQb
+- group: lego
+  bot: legobot
+  name: 레고 신제품·단종
+  description: 레고 공식 한국 스토어의 신제품 국내 출시일과 단종 예정 세트의 판매 종료 일정
+  thumbnail: null
+  categories:
+  - 출시
+  - 단종
+  id: 6k0Bo7AbEJL8
+  category_ids:
+    출시: AjFvjq5sNxt8
+    단종: slBBd08tAtNB
