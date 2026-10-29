@@ -535,3 +535,41 @@
   category_ids:
     출시: AjFvjq5sNxt8
     단종: slBBd08tAtNB
+- group: anime
+  bot: animebot
+  name: 명탐정 코난
+  description: 명탐정 코난 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/NIfagqazClTY95RbxBkAb12FkS9i-2OZ_DpcyEaVmj2FNQH9ziIB-2QECmmO8lkGcNZaFww4PnhMUfAKnfvuann47V6JH9nbra4S2AXA13t0IHm6aecXnBhET14zrCfwKIvwyazwFVNvQgH-IQLwYQ.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: EWfnkRxSebrR
+  note: '장기작 — 사용자 결정 2026-10-29: 코난·원피스만 커버'
+  category_ids:
+    TV: -g9LP_8xUWDH
+    스트리밍: -4lz5Ya2j2wi
+    극장판: GCOFO85MzKzt
+    OVA: 9n4tztIAFc2R
+    특별편: jh-ageSHvaib
+- group: anime
+  bot: animebot
+  name: 원피스
+  description: 원피스 회차 방영일·한국 공개 일정 (TV·극장판·OVA·특별편)
+  thumbnail: https://i.namu.wiki/i/tRIgs3F8MUEo6_PBGsnW8mJIMVRWvDd6A4GcJwAGTw8rC6ObHRW8Yenvlr3ujlqvAWHgTCsjq1D-2aOUDI60HZcwwtdq-lOysHvvZbnsCxds-7TEOh4lH6uEpUNFmt4YbBdUgzTGYceYgOfG4rB-Eg.webp
+  categories:
+  - TV
+  - 스트리밍
+  - 극장판
+  - OVA
+  - 특별편
+  id: B1HoxhsFiy70
+  note: '장기작 — 사용자 결정 2026-10-29: 코난·원피스만 커버'
+  category_ids:
+    TV: -M3t639qEeIr
+    스트리밍: yScEfPFv3u1m
+    극장판: N0WIxjj2tAy3
+    OVA: w-jSffz-UuKo
+    특별편: oMqVtJpSr55E
