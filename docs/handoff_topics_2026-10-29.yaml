@@ -16,6 +16,7 @@
     극장판: I3nSKVSWoJJL
     OVA: U4L5qGN80kT-
     특별편: _53kysi7y4Aj
+  status: deleted_by_user_2026-10-29
 - group: anime
   bot: animebot
   name: 리락쿠마
@@ -34,6 +35,7 @@
     극장판: XimffcI2gD7o
     OVA: FkGx2r3o985y
     특별편: 1SnLOrD5pDv_
+  status: deleted_by_user_2026-10-29
 - group: anime
   bot: animebot
   name: 베이블레이드X
@@ -52,6 +54,7 @@
     극장판: abxTO9UP6RGw
     OVA: IsZ3F3wc4I6u
     특별편: yXKQfkSdYhDW
+  status: deleted_by_user_2026-10-29
 - group: anime
   bot: animebot
   name: 배틀 스피리츠 [Re] 절계의 하늘
@@ -70,6 +73,7 @@
     극장판: iO1bQDx5aeGH
     OVA: 6qF0WM94kcHG
     특별편: J41-T7nbtEdE
+  status: deleted_by_user_2026-10-29
 - group: anime
   bot: animebot
   name: 약사의 혼잣말
@@ -106,6 +110,7 @@
     극장판: wAgH0qNtKSng
     OVA: utZ5hKu7TDpQ
     특별편: 2WJwcd_GpFWr
+  status: deleted_by_user_2026-10-29
 - group: anime
   bot: animebot
   name: 드래곤볼
@@ -124,6 +129,8 @@
     극장판: LIB58VDZZAnt
     OVA: 2cdaizc5PXaA
     특별편: 1JzXW9_F6HOd
+  status: renamed_by_user
+  current_name: 드래곤볼 방영
 - group: anime
   bot: animebot
   name: 하늘은 붉은 강가
@@ -142,6 +149,7 @@
     극장판: jXz24c8XwmpY
     OVA: hFK25yTSyrNc
     특별편: gaW_oLmaEzko
+  status: deleted_by_user_2026-10-29
 - group: anime
   bot: animebot
   name: 치토세 군은 라무네 병 속에
@@ -160,6 +168,7 @@
     극장판: hljDOD5Zhf15
     OVA: djpazANK8qnM
     특별편: m_ARcIHAsZXO
+  status: deleted_by_user_2026-10-29
 - group: anime
   bot: animebot
   name: 다이아몬드 에이스
@@ -178,6 +187,7 @@
     극장판: UpghoiRC4jM5
     OVA: 6o9R9QEp7yp3
     특별편: MdhV3ooPu4qF
+  status: deleted_by_user_2026-10-29
 - group: anime
   bot: animebot
   name: 템빨 애니메이션
@@ -197,6 +207,7 @@
     극장판: tOMh-f6IrH-E
     OVA: _1GM_XCIbZsv
     특별편: Gx9lfpCFmaM6
+  status: deleted_by_user_2026-10-29
 - group: anime
   bot: animebot
   name: '스틸 볼 런: 죠죠의 기묘한 모험'
@@ -233,6 +244,7 @@
     극장판: ugY2xiZgkD-v
     OVA: oL8Eg-OKAxz7
     특별편: vgd1J90Ul0VV
+  status: deleted_by_user_2026-10-29
 - group: anime
   bot: animebot
   name: 블랙 클로버
@@ -251,6 +263,7 @@
     극장판: WlZCeo72YRbT
     OVA: MWhPOdW2_aUt
     특별편: BSF2MVwx2J3F
+  status: deleted_by_user_2026-10-29
 - group: anime
   bot: animebot
   name: 란마 1/2
@@ -287,6 +300,7 @@
     극장판: LX5oZ_8gbltH
     OVA: c0eNPHjGuQx_
     특별편: 4ns7WRTC2cWU
+  status: deleted_by_user_2026-10-29
 - group: anime
   bot: animebot
   name: 푸른 상자
@@ -341,6 +355,7 @@
     극장판: NmXI0jzleJHM
     OVA: sOOVbliE8fNW
     특별편: 1hD1g6nMyOva
+  status: deleted_by_user_2026-10-29
 - group: anime
   bot: animebot
   name: 전생했더니 검이었습니다
@@ -359,6 +374,7 @@
     극장판: rZQsAAjkb3ST
     OVA: OCEDgLrNfNYP
     특별편: DykGLP3ETsSS
+  status: deleted_by_user_2026-10-29
 - group: player_football
   bot: koreansoccerguysbot
   name: 손흥민 경기 일정
@@ -371,6 +387,8 @@
   category_ids:
     소속팀 경기: HbTYHD4HqBj-
     국가대표 경기: YjA9FeyL9IGI
+  status: renamed_by_user
+  current_name: 손흥민 경기
 - group: player_football
   bot: koreansoccerguysbot
   name: 이강인 경기 일정
@@ -383,6 +401,8 @@
   category_ids:
     소속팀 경기: i7-vLirs5jVP
     국가대표 경기: lP85_A4W3SDx
+  status: renamed_by_user
+  current_name: 이강인 경기
 - group: player_football
   bot: koreansoccerguysbot
   name: 김민재 경기 일정
@@ -395,6 +415,8 @@
   category_ids:
     소속팀 경기: NMahJMNwX9nF
     국가대표 경기: aQsXn1LYLde5
+  status: renamed_by_user
+  current_name: 김민재 경기
 - group: player_football
   bot: koreansoccerguysbot
   name: 양민혁 경기 일정
@@ -407,6 +429,8 @@
   category_ids:
     소속팀 경기: y_EK2axYmyOB
     국가대표 경기: aTGTeaT3p2Qd
+  status: renamed_by_user
+  current_name: 양민혁 경기
 - group: player_football
   bot: koreansoccerguysbot
   name: 황희찬 경기 일정
@@ -419,6 +443,8 @@
   category_ids:
     소속팀 경기: 7UhGvSZNcNVL
     국가대표 경기: TQ4fibZboGOP
+  status: renamed_by_user
+  current_name: 황희찬 경기
 - group: player_mlb
   bot: mlbplayersbot
   name: 이정후 경기 일정
@@ -433,6 +459,8 @@
     정규시즌: jsQOa_a791wl
     포스트시즌: fiGb-_bgvOGU
     시범경기: T5Z1iC7S3yzy
+  status: renamed_by_user
+  current_name: 이정후 경기
 - group: player_mlb
   bot: mlbplayersbot
   name: 김하성 경기 일정
@@ -447,6 +475,8 @@
     정규시즌: O_EIJvL5aGMX
     포스트시즌: 6pg7trqUPjNA
     시범경기: PQ9kRr0OkOS8
+  status: renamed_by_user
+  current_name: 김하성 경기
 - group: player_mlb
   bot: mlbplayersbot
   name: 김혜성 경기 일정
@@ -461,6 +491,8 @@
     정규시즌: rFfsCh5e0WEs
     포스트시즌: altu1yesFSr-
     시범경기: hJZSFmE6VACV
+  status: renamed_by_user
+  current_name: 김혜성 경기
 - group: ip
   bot: ipcalbot
   name: 산리오 캘린더
