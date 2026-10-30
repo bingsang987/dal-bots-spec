@@ -71,6 +71,42 @@ def test_update_event_guards_fields(fake_dal, soon):
     assert len(body["location"]) == 64
 
 
+# ── 규칙 경고 (dalbots-fx8) — 경고만, 전송은 그대로 ─────────────────────────
+def _rule_warns(caplog):
+    return [r.getMessage() for r in caplog.records if "RULE-WARN" in r.getMessage()]
+
+
+def test_create_event_warns_on_rule_violations_but_still_sends(fake_dal, soon, caplog):
+    caplog.set_level("WARNING", logger=dw.logger.name)
+    desc = '본문<br>출처: 나무위키 <a href="https://x.test">링크</a>'
+    eid = dw.create_event(topic_id="T", summary="[DK] DK 갠방", start=soon, end=soon,
+                          all_day=True, description=desc)
+    assert eid == "ev1"
+    body = fake_dal.paths("/events/create")[0]
+    assert body["summary"] == "[DK] DK 갠방" and body["description"] == desc   # 고치지 않는다
+    warns = " | ".join(_rule_warns(caplog))
+    for rule in ("categoryId 누락", "[카테고리] prefix", "종일 start==end", "본문 출처 표기",
+                 "target=_blank 누락"):
+        assert rule in warns
+
+
+def test_create_event_clean_event_has_no_rule_warns(fake_dal, soon, caplog):
+    caplog.set_level("WARNING", logger=dw.logger.name)
+    dw.create_event(topic_id="T", summary="풀리그 1일차", start=soon, end=soon + timedelta(hours=23),
+                    all_day=True, category_id="C1",
+                    description='<a href="https://x.test" target="_blank" rel="noopener noreferrer">VOD</a>')
+    assert _rule_warns(caplog) == []
+
+
+def test_update_event_warns_only_on_given_fields(fake_dal, soon, caplog):
+    caplog.set_level("WARNING", logger=dw.logger.name)
+    eid = fake_dal.add_event("T", "원래 제목", soon)
+    dw.update_event(eid, description="새 본문입니다")        # categoryId 안 넘김 = 서버 값 유지 → 경고 X
+    assert _rule_warns(caplog) == []
+    ok, _ = dw.update_event(eid, summary="[예정] 방송")
+    assert ok and "[카테고리] prefix" in " | ".join(_rule_warns(caplog))
+
+
 # ── list_events / ListFailed ─────────────────────────────────────────────
 def test_list_events_raises_on_5xx(fake_dal):
     fake_dal.fail_list = 500

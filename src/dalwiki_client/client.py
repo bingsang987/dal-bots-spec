@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from datetime import date, datetime, timezone
 from typing import Iterable, Optional
@@ -283,6 +284,43 @@ def _guard_location(location) -> Optional[str]:
     return loc
 
 
+# ── 이벤트 규칙 경고 (spec/04-cross-cutting.md §11) ───────────────────────────
+# 지금은 경고만 한다 — 막거나 고치지 않는다. 로그에서 `RULE-WARN` 으로 grep 해 위반 봇을 찾고,
+# 위반이 사라지면 자동 교정/차단으로 올린다(dalbots-fx8).
+
+_SUMMARY_PREFIX_RE = re.compile(r"^\s*\[[^\]]+\]")
+_ANCHOR_RE = re.compile(r"<a\b[^>]*>", re.IGNORECASE)
+_TARGET_BLANK_RE = re.compile(r"""target\s*=\s*["']?_blank""", re.IGNORECASE)
+
+
+def _warn_rule_violations(where: str, ref: str, *, summary=None, start=None, end=None,
+                          all_day=None, description=None, category_id=None,
+                          require_category: bool = False) -> list[str]:
+    """규칙 위반을 찾아 `RULE-WARN` 경고 로그를 남기고 위반 이름 목록을 돌려준다.
+
+    None 인 필드는 검사하지 않는다(update 의 '서버 값 유지'). 검사 자체가 실패해도 쓰기는 막지 않는다.
+    """
+    found: list[str] = []
+    try:
+        if require_category and not category_id:
+            found.append("categoryId 누락")
+        if isinstance(summary, str) and _SUMMARY_PREFIX_RE.match(summary):
+            found.append("summary [카테고리] prefix")
+        if all_day and start is not None and end is not None and _iso_z(start) == _iso_z(end):
+            found.append("종일 start==end")
+        if isinstance(description, str):
+            if "출처" in description:
+                found.append("본문 출처 표기")
+            if any(not _TARGET_BLANK_RE.search(a) for a in _ANCHOR_RE.findall(description)):
+                found.append("링크 target=_blank 누락")
+    except Exception as e:  # 경고 검사는 절대 쓰기를 깨뜨리면 안 된다
+        logger.debug(f"_warn_rule_violations 검사 실패: {e}")
+        return found
+    for rule in found:
+        logger.warning(f"RULE-WARN {where} {ref}: {rule} — summary={summary!r}")
+    return found
+
+
 def list_events(
     topic_id: str,
     from_=None,
@@ -408,6 +446,10 @@ def create_event(
 
     color는 OpenAPI 스키마에 없지만 봇 일부가 쓰던 옛 필드라 호환성 위해 전달 가능.
     """
+    _warn_rule_violations(
+        "create", f"topic={topic_id}", summary=summary, start=start, end=end, all_day=all_day,
+        description=description, category_id=category_id, require_category=True,
+    )
     summary = _guard_summary(summary)
     description = _guard_description(description)
     location = _guard_location(location)
@@ -470,6 +512,10 @@ def update_event(
     unknown = set(clear_empty) - set(CLEARABLE_FIELDS)
     if unknown:
         raise ValueError(f"clear_empty 는 {sorted(CLEARABLE_FIELDS)} 중에서: {sorted(unknown)}")
+    _warn_rule_violations(
+        "update", f"id={event_id}", summary=summary, start=start, end=end, all_day=all_day,
+        description=description,
+    )
     body: dict = {"id": event_id}
     if summary is not None:
         body["summary"] = _guard_summary(summary)
