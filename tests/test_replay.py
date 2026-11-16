@@ -92,6 +92,54 @@ def test_plan_create_when_no_event_and_not_twice():
     assert replay.plan([], [r], applied_ids={"v1"}, **kw) == []
 
 
+def _rec(o, c, t="엘든링"):
+    return replay.LiveRec(_ms(o), _ms(c), t)
+
+
+def test_plan_live_attaches_nearest_same_day():
+    evs = [_ev("a", "2026-11-14T12:00"), _ev("b", "2026-11-14T20:00")]
+    acts = replay.plan_live(evs, [_rec("2026-11-14T19:30", "2026-11-14T23:00"),
+                                  _rec("2026-11-15T01:00", "2026-11-15T03:00", "토크")],
+                            now_ms=_ms("2026-11-16T00:00"), since_ms=_ms("2026-11-01T00:00"))
+    assert [(a.event["id"], a.title()) for a in acts] == [("b", "엘든링, 토크")]
+
+
+def test_plan_live_create_once_and_not_on_busy_or_open():
+    huibang = dict(_ev("h", "2026-11-03T18:00"), summary="휴방")
+    later = _ev("f", "2026-11-15T20:00")          # 오늘 저녁 예정(아직 안 옴)
+    other = _ev("o", "2026-11-10T20:00")          # 다른 날 지난 일정(일정을 챙기는 스트리머)
+    recs = [_rec("2026-11-03T13:00", "2026-11-03T14:10"), _rec("2026-11-03T16:00", "2026-11-03T17:00", "토크"),
+            _rec("2026-11-15T13:00", "2026-11-15T14:00"),               # 예정 있는 날 → 만들지 않음
+            replay.LiveRec(_ms("2026-11-15T15:00"), 0, "")]             # 아직 방송 중(종료 없음)
+    kw = dict(now_ms=_ms("2026-11-15T16:00"), since_ms=_ms("2026-11-01T00:00"),
+              skip=lambda ev: ev["summary"] == "휴방")
+    acts = replay.plan_live([huibang, later, other], recs, **kw)
+    assert len(acts) == 1 and acts[0].event is None and acts[0].date == "2026-11-03"
+    assert acts[0].start_ms == _ms("2026-11-03T13:00") and acts[0].title() == "엘든링, 토크"
+    applied = set(acts[0].open_ms_list)
+    assert replay.plan_live([huibang, later, other], recs, applied_opens=applied, **kw) == []
+
+
+def test_plan_live_no_create_without_any_past_event():
+    recs = [_rec("2026-11-03T13:00", "2026-11-03T14:10")]
+    kw = dict(now_ms=_ms("2026-11-15T16:00"), since_ms=_ms("2026-11-01T00:00"))
+    assert replay.plan_live([], recs, **kw) == []
+    assert len(replay.plan_live([], recs, require_events=False, **kw)) == 1
+
+
+def test_load_live_reads_broadcasts(tmp_path):
+    p = tmp_path / "archive.db"
+    c = sqlite3.connect(p)
+    c.execute("CREATE TABLE broadcasts (channel_id TEXT, open_ms INTEGER, close_ms INTEGER, vod_title TEXT, "
+              "vods TEXT, updated_at TEXT)")
+    c.executemany("INSERT INTO broadcasts VALUES (?,?,?,?,'[]','x')",
+                  [("c1", 100, 200, "a"), ("c1", 300, 400, None), ("c2", 300, 400, "b")])
+    c.commit()
+    c.close()
+    assert replay.load_live("c1", 150, path=str(p)) == [replay.LiveRec(300, 400, "")]
+    assert replay.load_live("c1", 0, path=str(tmp_path / "none.db")) is None
+
+
 def test_next_title_protects_human_edit():
     conn = sqlite3.connect(":memory:")
     replay.ensure_schema(conn)

@@ -67,6 +67,12 @@ SCHEMA = (
         bot_title  TEXT,                -- 봇이 마지막으로 쓴 제목(사람 수정 판별)
         updated_at TEXT,
         PRIMARY KEY (member, event_id))""",
+    """CREATE TABLE IF NOT EXISTS live_applied (
+        member     TEXT NOT NULL,
+        open_ms    INTEGER NOT NULL,    -- 방송 기록 시작(UTC ms)으로 새 일정을 만들었음
+        event_id   TEXT NOT NULL,
+        updated_at TEXT,
+        PRIMARY KEY (member, open_ms))""",
 )
 
 
@@ -417,6 +423,106 @@ def plan(events: Iterable[dict], replays: Iterable[Replay], *, now_ms: int, sinc
     for a in groups.values():
         a.replays.sort(key=lambda r: (r.start_ms or 0, r.published_ms))
     return list(groups.values()) + out
+
+
+# ---------------------------------------------------------------------------
+# 방송 기록 (노트북 수집기 → 디스코드 → chzzkarchivebot 의 archive.db broadcasts 표)
+# ---------------------------------------------------------------------------
+ARCHIVE_DB_DEFAULT = os.path.join(os.path.expanduser("~"), "Documents", "chzzkarchivebot", "state", "archive.db")
+
+
+@dataclass
+class LiveRec:
+    open_ms: int
+    close_ms: int
+    title: str              # 방송 제목(제목이 '[이름]'뿐이면 카테고리 이름 — chzzkarchivebot 이 넣을 때 정함)
+
+
+def load_live(chzzk_channel_id: str, since_ms: int, *, path: Optional[str] = None) -> Optional[list[LiveRec]]:
+    """since_ms 이후 시작한 방송 기록(읽기 전용). 표를 못 읽으면 None."""
+    path = path or os.environ.get("CHZZK_ARCHIVE_DB") or ARCHIVE_DB_DEFAULT
+    if not os.path.exists(path):
+        logger.warning("방송 기록 DB 없음: %s", path)
+        return None
+    try:
+        c = sqlite3.connect("file:" + path.replace("\\", "/") + "?mode=ro", uri=True, timeout=10)
+        try:
+            rows = c.execute("SELECT open_ms, close_ms, COALESCE(vod_title, '') FROM broadcasts "
+                             "WHERE channel_id=? AND open_ms>=? ORDER BY open_ms", (chzzk_channel_id, since_ms)).fetchall()
+        finally:
+            c.close()
+    except sqlite3.Error as e:
+        logger.warning("방송 기록 읽기 실패: %s", e)
+        return None
+    return [LiveRec(int(o), int(cl or 0), t or "") for o, cl, t in rows]
+
+
+@dataclass
+class LiveAction:
+    event: Optional[dict]   # None = 그 방송일에 일정 없음 → 새로 만들기(첫 방송 시작 시각)
+    date: str
+    recs: list[LiveRec] = field(default_factory=list)
+
+    @property
+    def start_ms(self) -> int:
+        return min(r.open_ms for r in self.recs)
+
+    @property
+    def open_ms_list(self) -> list[int]:
+        return [r.open_ms for r in self.recs]
+
+    def title(self, clean: Callable[[str], str] = lambda t: t) -> str:
+        return ", ".join(dict.fromkeys(t for t in (clean(r.title) for r in self.recs) if t)) or "방송"
+
+
+def plan_live(events: Iterable[dict], recs: Iterable[LiveRec], *, now_ms: int, since_ms: int,
+              skip: Callable[[dict], bool] = lambda ev: False,
+              applied_opens: Optional[set[int]] = None, require_events: bool = True) -> list[LiveAction]:
+    """끝난 방송 기록을 같은 방송일(06시 전 시작은 전날)의 지난 일정에 짝짓는다.
+    - 그날 일정이 있으면: 시각 있는 일정 중 시작이 가장 가까운 것(없으면 종일 일정). 제목을 바꿀지는 호출자가
+      정한다(자리표시 제목일 때만 — 유튜브 다시보기, VOD 제목이 우선).
+    - 그날 일정이 없으면(휴방, 외부 일정 같은 skip 일정만 있어도) 새 일정 제안. 같은 날 여러 방송은 한 일정.
+      전에 이 방송으로 만든 적이 있으면(applied_opens) 다시 제안하지 않는다 — 사람이 지운 일정을 되살리지 않게.
+    - require_events: 지난 일정이 하나도 없으면(일정을 안 챙기는 스트리머) 새 일정을 제안하지 않는다.
+      VOD 봇의 orphan 생성 가드와 같은 규칙."""
+    applied_opens = applied_opens or set()
+    cands: dict[str, list[dict]] = {}
+    busy: set[str] = set()   # 일정이 있는 방송일(아직 안 온 일정 포함) — 새로 만들지 않음
+    for ev in events:
+        if skip(ev) or not ev.get("id"):
+            continue
+        busy.add(event_day(ev))
+        if _ev_ms(ev) >= now_ms:
+            continue
+        cands.setdefault(event_day(ev), []).append(ev)
+    groups: dict[str, LiveAction] = {}
+    creates: dict[str, LiveAction] = {}
+    for r in sorted(recs, key=lambda r: r.open_ms):
+        if r.open_ms < since_ms or not r.close_ms or r.close_ms > now_ms:
+            continue
+        day = effective_day(r.open_ms)
+        evs = cands.get(day)
+        if evs:
+            timed = [e for e in evs if not e.get("allDay")] or evs
+            ev = min(timed, key=lambda e: abs(_ev_ms(e) - r.open_ms))
+            groups.setdefault(ev["id"], LiveAction(ev, day)).recs.append(r)
+        elif day not in busy and r.open_ms not in applied_opens and (cands or not require_events):
+            creates.setdefault(day, LiveAction(None, day)).recs.append(r)
+    return list(groups.values()) + list(creates.values())
+
+
+def live_opens(conn: sqlite3.Connection, member: str) -> set[int]:
+    return {row[0] for row in conn.execute("SELECT open_ms FROM live_applied WHERE member=?", (member,))}
+
+
+def record_live(conn: sqlite3.Connection, member: str, open_ms_list: Iterable[int], event_id: str,
+                dry_run: bool = False) -> None:
+    if dry_run:
+        return
+    now = datetime.now(KST).isoformat(timespec="seconds")
+    conn.executemany("INSERT OR REPLACE INTO live_applied (member, open_ms, event_id, updated_at) VALUES (?,?,?,?)",
+                     [(member, o, event_id, now) for o in open_ms_list])
+    conn.commit()
 
 
 # ---------------------------------------------------------------------------
