@@ -1,0 +1,32 @@
+{
+  "_doc": "다시보기/방송 기록 명단 (pointfarm-fc3d). owner = 이 스트리머 일정을 쓰는 봇. 명단에 있으면 그 봇이 다시보기 단계를 켠다(youtube_channel_id 가 있을 때). live_only = 생방송 기록(라이브 탭)만. strip = 제목에서 지울 채널별 정규식. main-only = 개별 캘린더 없이 메인만(허니즈, 아카시아: cluezvodbot 이 VOD+다시보기, 그룹은 streamersyncbot 미러).",
+  "streamers": [
+    {"name": "따효니", "owner": "chzzkvodbot", "chzzk_channel_id": "0dad8baf12a436f722faa8e5001c5011", "youtube_channel_id": "UCRuolFIDKRFuwT6x5uitojw", "live_only": true, "strip": ["^\\s*방송\\s*"]},
+    {"name": "다주", "owner": "chzzkvodbot", "chzzk_channel_id": "bdc57cc4217173f0e89f63fba2f1c6e5", "youtube_channel_id": "UCLsOJitXGX7jZheuGj777-A", "strip": ["다톡방\\s*,?\\s*"]},
+    {"name": "윤가놈", "owner": "chzzkvodbot", "chzzk_channel_id": "1ad5aa0f6c6741b072528fad5e5e76b1", "youtube_channel_id": "UCl8lKwEXdYxIbZf-FVWmWKg"},
+    {"name": "명예훈장", "owner": "chzzkvodbot", "chzzk_channel_id": "5d53f8fa5bef9b1bd4dc884f9907c079"},
+    {"name": "녹두로", "owner": "chzzkvodbot", "chzzk_channel_id": "6e06f5e1907f17eff543abd06cb62891", "youtube_channel_id": "UC9vz3TBChrJmYbzUo-rqfSg", "live_only": true},
+    {"name": "독케익", "owner": "chzzkvodbot", "chzzk_channel_id": "b68af124ae2f1743a1dcbf5e2ab41e0b", "youtube_channel_id": "UCzdsBMcTdToWM4S72p49Dew", "strip": ["^\\s*독케익\\s+"]},
+
+    {"name": "키유", "owner": "cluezvodbot", "chzzk_channel_id": "a3ceb9179d99be8d1e63b3e911fcd16b", "youtube_channel_id": "UCAnMqH4hdq5SSQCaD0FaIcQ"},
+    {"name": "나루", "owner": "cluezvodbot", "chzzk_channel_id": "e3d4faf55988a83862318b27ff2906de", "youtube_channel_id": "UCLILc7LgLtfojGL3i_V_iNg"},
+    {"name": "채랑", "owner": "cluezvodbot", "chzzk_channel_id": "295483ac14f8c5b1426c71bebefcf563", "youtube_channel_id": "UCBw9mzS1a3Itd4qpFSPCOVw"},
+    {"name": "아멜리", "owner": "cluezvodbot", "chzzk_channel_id": "e17948db0ed0ee4609203cad91f89177", "youtube_channel_id": "UCq-qNy0zCxDoryluY2nf6Ng"},
+
+    {"name": "아리사", "owner": "aesthervodbot", "chzzk_channel_id": "4de764d9dad3b25602284be6db3ac647", "youtube_channel_id": "UCqpRwUjAaZZomos712cAAkA"},
+    {"name": "에리스", "owner": "aesthervodbot", "chzzk_channel_id": "17d8605fc37fb5ef49f5f67ae786fe4e", "youtube_channel_id": "UCLfDNkWCsFXQ8Q0LaCUm0Bw"},
+    {"name": "엘리", "owner": "aesthervodbot", "chzzk_channel_id": "475313e6c26639d5763628313b4c130e", "youtube_channel_id": "UCA-DYDO59oIwhein0noZlsg"},
+    {"name": "카린", "owner": "aesthervodbot", "chzzk_channel_id": "32fb866e323242b770cdc790f991a6f6", "youtube_channel_id": "UCW71_EaCrqLb_lTr8aP0Fog"},
+
+    {"name": "담유이", "owner": "main-only", "group": "HONEYZ", "chzzk_channel_id": "b82e8bc2505e37156b2d1140ba1fc05c", "main_cat_id": "UQZduWElXRFs"},
+    {"name": "디디디용", "owner": "main-only", "group": "HONEYZ", "chzzk_channel_id": "798e100206987b59805cfb75f927e965", "main_cat_id": "7YM3sksHmKOt", "youtube_channel_id": "UCZznqq0-ZBvtel1ieA8f35g"},
+    {"name": "아야", "owner": "main-only", "group": "HONEYZ", "chzzk_channel_id": "abe8aa82baf3d3ef54ad8468ee73e7fc", "main_cat_id": "2cKDJU3xlE3N"},
+    {"name": "오화요", "owner": "main-only", "group": "HONEYZ", "chzzk_channel_id": "65a53076fe1a39636082dd6dba8b8a4b", "main_cat_id": "slFDV3PYSSph", "youtube_channel_id": "UCievTvUoTxfxJMbxom8i2Fg"},
+    {"name": "허니츄러스", "owner": "main-only", "group": "HONEYZ", "chzzk_channel_id": "c0d9723cbb75dc223c6aa8a9d4f56002", "main_cat_id": "YNvXL5dfSwIv"},
+    {"name": "블레어 로즈", "owner": "main-only", "group": "ACAXIA", "chzzk_channel_id": "dae2de8eaa005a59163f2e4c045e1aa1", "main_cat_id": "07lJ4WJKiF3D", "youtube_channel_id": "UCt_kzL6XXp7DZT_Vb8gwfPQ"},
+    {"name": "류시호", "owner": "main-only", "group": "ACAXIA", "chzzk_channel_id": "f36320c432d9f06095ce2cfbbf681c26", "main_cat_id": "SAzDuasD4V6F"},
+    {"name": "비올레타 모네", "owner": "main-only", "group": "ACAXIA", "chzzk_channel_id": "5c897b3e639045ca6e314bbaff991f73", "main_cat_id": "ZkVKJwBqR6Ar", "youtube_channel_id": "UCB92N2VKhlyqWm9bFB3xpgQ"},
+    {"name": "포포포포", "owner": "main-only", "group": "ACAXIA", "chzzk_channel_id": "3e3781d3bd20dadc2f6f6d5d30091195", "main_cat_id": "UtnJjiDYT2Ll", "youtube_channel_id": "UC2w7ekaQwx-gocvbqD0M2Pg"},
+    {"name": "하시요", "owner": "main-only", "group": "ACAXIA", "chzzk_channel_id": "b33c957eac9335d38e4043c3dca97675", "main_cat_id": "khCWkbKFBrUU"}
+  ]
+}

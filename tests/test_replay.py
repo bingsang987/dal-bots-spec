@@ -1,0 +1,87 @@
+"""botkit.replay — 다시보기 제목 날짜/정리, 짝짓기, 제목 보호 (pointfarm-fc3d)."""
+import sqlite3
+from datetime import datetime
+
+import pytest
+
+from botkit import replay
+from botkit.replay import KST, Replay
+
+
+@pytest.mark.parametrize("raw, date, title", [
+    ("261114) 찡켓몬2 [다톡방,마인크래프트]", "2026-11-14", "찡켓몬2 다톡방,마인크래프트"),
+    ("261022 독케익 데모게임천국", "2026-10-22", "독케익 데모게임천국"),
+    ("2026-11-13 하트골드 비행 타입 - 5부", "2026-11-13", "하트골드 비행 타입"),
+    ("26.11.15 (2/2) 사이코 슬루스 -완-", "2026-11-15", "사이코 슬루스 -완"),
+    ("2026.11.15  떵겜 퐉퐉 먹기 ✨💚", "2026-11-15", "떵겜 퐉퐉 먹기"),
+    ("【2026.11.15】수수께끼에 미친 사람들의 마을", "2026-11-15", "수수께끼에 미친 사람들의 마을"),
+    ("[2026/11/15] 맨손 항아리게임 + 후열 롤 / 끄투 다시보기 !", "2026-11-15", "맨손 항아리게임 + 후열 롤 / 끄투"),
+    ("[ 2026 / 11 / 16 ] 밥똥삼데이", "2026-11-16", "밥똥삼데이"),
+    ("[ 26/11/06┆짜쳐짜쳐서버 ] 짜짜섭 마지막 날", "2026-11-06", "짜쳐짜쳐서버 짜짜섭 마지막 날"),
+    ("2026 11 14 자낳대26 : 로블록스 DAY 3", "2026-11-14", "자낳대26 : 로블록스 DAY 3"),
+    ("26/11/15 예비군 💙", "2026-11-15", "예비군"),
+    ("퀸즈 도메인 2026-11-14", "2026-11-14", "퀸즈 도메인"),
+    ("[2026/11/08 미믹 파티 - 김똘복]-이춘향 다시보기", "2026-11-08", "미믹 파티 - 김똘복"),
+    ("[2026/11/12] Punch The Walls - 김진우 FULL 다시보기 #2", "2026-11-12", "Punch The Walls"),
+])
+def test_date_and_clean(raw, date, title):
+    d, rest = replay.parse_date(raw)
+    assert d == date
+    assert replay.clean_title(rest) == title
+
+
+def test_no_date():
+    assert replay.parse_date("드디어 감을 찾은 명훈 [리그오브레전드]") is None
+
+
+def test_strip_regex_and_paren_unwrap():
+    d, rest = replay.parse_date("2026년 11월 15일 방송 (예비군 코리안 다크소울)")
+    assert replay.clean_title(rest, [r"^\s*방송\s*"]) == "예비군 코리안 다크소울"
+
+
+def test_placeholder():
+    assert replay.is_placeholder_title("방송 예정 - 엘든링")
+    assert replay.is_placeholder_title("[키유] 방송 예정")
+    assert not replay.is_placeholder_title("엘든링 엔딩 야르")
+
+
+def _ms(s):
+    return int(datetime.fromisoformat(s).replace(tzinfo=KST).timestamp() * 1000)
+
+
+def _ev(i, s, desc=""):
+    return {"id": i, "start": datetime.fromisoformat(s).replace(tzinfo=KST).isoformat(), "allDay": False,
+            "summary": "방송 예정", "description": desc}
+
+
+def test_plan_length_beats_title_date():
+    """자정 넘긴 방송: 제목 날짜(11/6)가 아니라 길이가 맞는 11/5 23시 일정에."""
+    evs = [_ev("a", "2026-11-05T23:00"), _ev("b", "2026-11-06T18:00")]
+    r = Replay("v1", "2026-11-06", "짜짜섭 2일차", None, None, 0, length_s=3 * 3600)
+    acts = replay.plan(evs, [r], now_ms=_ms("2026-11-10T00:00"), since_ms=_ms("2026-11-01T00:00"),
+                       durations={"a": 3 * 3600 + 120, "b": 6 * 3600})
+    assert [(a.event["id"], a.video_ids) for a in acts] == [("a", ["v1"])]
+
+
+def test_plan_create_when_no_event_and_not_twice():
+    r = Replay("v1", "2026-11-03", "토크", None, None, 0)
+    kw = dict(now_ms=_ms("2026-11-10T00:00"), since_ms=_ms("2026-11-01T00:00"))
+    acts = replay.plan([], [r], **kw)
+    assert acts[0].event is None and acts[0].all_day
+    assert replay.plan([], [r], applied_ids={"v1"}, **kw) == []
+
+
+def test_next_title_protects_human_edit():
+    conn = sqlite3.connect(":memory:")
+    replay.ensure_schema(conn)
+    assert replay.next_title(conn, "m", "e", "방송 예정", "엘든링") == "엘든링"
+    replay.record(conn, "m", "e", ["v1"], "엘든링")
+    assert replay.next_title(conn, "m", "e", "엘든링", "엘든링 엔딩") == "엘든링 엔딩"
+    assert replay.next_title(conn, "m", "e", "사람이 고침", "엘든링 엔딩") is None
+    assert replay.is_done(conn, "m", "e", ["v1"], "엘든링")
+
+
+def test_merge_description_idempotent():
+    d = replay.merge_description("<p>카페</p>", ["abc"])
+    assert d.startswith("<p>카페</p>") and "/embed/abc" in d
+    assert replay.merge_description(d, ["abc"]) == d
