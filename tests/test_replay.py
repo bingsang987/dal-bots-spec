@@ -43,6 +43,9 @@ def test_placeholder():
     assert replay.is_placeholder_title("방송 예정 - 엘든링")
     assert replay.is_placeholder_title("[키유] 방송 예정")
     assert not replay.is_placeholder_title("엘든링 엔딩 야르")
+    assert replay.is_placeholder_title("갠방")
+    assert replay.is_placeholder_title("갠방(VOD 업로드 예정)")
+    assert not replay.is_placeholder_title("갠방 - 엘든링")
 
 
 def _ms(s):
@@ -61,6 +64,24 @@ def test_plan_length_beats_title_date():
     acts = replay.plan(evs, [r], now_ms=_ms("2026-11-10T00:00"), since_ms=_ms("2026-11-01T00:00"),
                        durations={"a": 3 * 3600 + 120, "b": 6 * 3600})
     assert [(a.event["id"], a.video_ids) for a in acts] == [("a", ["v1"])]
+
+
+def test_plan_length_prefers_title_date_within_tolerance():
+    """길이가 둘 다 비슷하면(허용 범위 안) 제목 날짜 일정에 — 이웃 날 일정이 더 가까워도."""
+    evs = [_ev("a", "2026-11-13T12:00"), _ev("b", "2026-11-14T16:00")]
+    r = Replay("v1", "2026-11-13", "명조", None, None, 0, length_s=521 * 60)
+    acts = replay.plan(evs, [r], now_ms=_ms("2026-11-16T00:00"), since_ms=_ms("2026-11-01T00:00"),
+                       durations={"a": 500 * 60, "b": 522 * 60})
+    assert [(a.event["id"], a.video_ids) for a in acts] == [("a", ["v1"])]
+
+
+def test_plan_all_day_uses_calendar_date():
+    """봇이 만든 종일 일정(00:00 시작)은 전날이 아니라 그 날짜로 본다."""
+    ev = {"id": "d", "start": "2026-11-01T00:00:00+09:00", "allDay": True, "summary": "x", "description": ""}
+    r = Replay("v2", "2026-11-01", "토크", None, None, 0)
+    acts = replay.plan([ev], [r], now_ms=_ms("2026-11-10T00:00"), since_ms=_ms("2026-10-20T00:00"),
+                       own_event_ids={"d"})
+    assert [(a.event["id"], a.video_ids) for a in acts] == [("d", ["v2"])]
 
 
 def test_plan_create_when_no_event_and_not_twice():

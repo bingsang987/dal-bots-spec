@@ -330,6 +330,17 @@ def _ev_ms(ev: dict) -> int:
     return int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp() * 1000)
 
 
+def kst_date(ms: int) -> str:
+    """ms → KST 달력 날짜(새벽 6시 규칙 없음). 조회 창 경계 비교용."""
+    return datetime.fromtimestamp(ms / 1000, KST).strftime("%Y-%m-%d")
+
+
+def event_day(ev: dict) -> str:
+    """일정의 방송일: 종일 일정은 그 날짜, 시각 있는 일정은 새벽 6시 전이면 전날."""
+    ms = _ev_ms(ev)
+    return kst_date(ms) if ev.get("allDay") else effective_day(ms)
+
+
 def _day_shift(date: str, n: int) -> str:
     return (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=n)).strftime("%Y-%m-%d")
 
@@ -353,7 +364,7 @@ def plan(events: Iterable[dict], replays: Iterable[Replay], *, now_ms: int, sinc
         ms = _ev_ms(ev)
         if ms >= now_ms:
             continue
-        cands.setdefault(effective_day(ms), []).append(ev)
+        cands.setdefault(event_day(ev), []).append(ev)
     since_day = datetime.fromtimestamp(since_ms / 1000, KST).strftime("%Y-%m-%d")
     by_date: dict[str, list[Replay]] = {}
     for r in replays:
@@ -376,9 +387,12 @@ def plan(events: Iterable[dict], replays: Iterable[Replay], *, now_ms: int, sinc
                 continue
             near = [e for d in (_day_shift(date, -1), date, _day_shift(date, 1)) for e in cands.get(d, [])
                     if durations.get(e.get("id"))]
-            best = min(near, key=lambda e: abs(durations[e["id"]] - r.length_s), default=None)
-            if best is not None and abs(durations[best["id"]] - r.length_s) <= length_tol * r.length_s:
-                put(best, effective_day(_ev_ms(best)), r)
+            # 길이가 허용 범위 안인 일정 중 제목 날짜의 일정을 먼저, 없으면 길이가 가장 가까운 것
+            near = [e for e in near if abs(durations[e["id"]] - r.length_s) <= length_tol * r.length_s]
+            best = min(near, key=lambda e: (event_day(e) != date, abs(durations[e["id"]] - r.length_s)),
+                       default=None)
+            if best is not None:
+                put(best, event_day(best), r)
             else:
                 rest.append(r)
         if not rest:
@@ -423,7 +437,9 @@ def merge_description(desc: Optional[str], video_ids: Iterable[str]) -> str:
     return out
 
 
-_PLACEHOLDER_RE = re.compile(r"^\s*(?:방송\s*예정|예정|갠방|VOD\s*업로드\s*예정|갠방\s*\(VOD\s*업로드\s*예정\))\s*(?:[-–:]\s*.*)?$")
+# 뒤에 '- 게임명' 이 붙어도 자리표시인 건 '방송 예정'/'예정' 뿐. '갠방 - 엘든링' 은 진짜 제목(chzzkvodbot 형식).
+_PLACEHOLDER_RE = re.compile(r"^\s*(?:(?:방송\s*예정|예정)(?:\s*[-–:]\s*.*)?|VOD\s*업로드\s*예정"
+                             r"|갠방(?:\s*[-–:]?\s*\(?\s*VOD\s*업로드\s*예정\s*\)?)?)\s*$")
 
 
 def is_placeholder_title(title: str) -> bool:
