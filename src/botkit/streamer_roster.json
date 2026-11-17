@@ -24,7 +24,7 @@
     {"name": "허니츄러스", "owner": "main-only", "group": "HONEYZ", "chzzk_channel_id": "c0d9723cbb75dc223c6aa8a9d4f56002", "main_cat_id": "YNvXL5dfSwIv"},
     {"name": "블레어 로즈", "owner": "main-only", "group": "ACAXIA", "chzzk_channel_id": "dae2de8eaa005a59163f2e4c045e1aa1", "main_cat_id": "07lJ4WJKiF3D", "youtube_channel_id": "UCt_kzL6XXp7DZT_Vb8gwfPQ"},
     {"name": "류시호", "owner": "main-only", "group": "ACAXIA", "chzzk_channel_id": "f36320c432d9f06095ce2cfbbf681c26", "main_cat_id": "SAzDuasD4V6F"},
-    {"name": "비올레타 모네", "owner": "main-only", "group": "ACAXIA", "chzzk_channel_id": "5c897b3e639045ca6e314bbaff991f73", "main_cat_id": "ZkVKJwBqR6Ar", "youtube_channel_id": "UCB92N2VKhlyqWm9bFB3xpgQ", "strip": ["[^\\s가-힣A-Za-z0-9()\\[\\]]*\\([^()가-힣A-Za-z0-9]*\\)(?:\\s*[^\\s가-힣A-Za-z0-9()\\[\\]+:!?~.,&/-]+)*", "\\|[^가-힣A-Za-z0-9]*$", "(?<!\\S)-?[ෆ♡]+(?!\\S)", "\\[\\s*┆\\s*([^\\]]+?)\\s*\\]\\s*(?=\\1)"]},
+    {"name": "비올레타 모네", "owner": "main-only", "group": "ACAXIA", "chzzk_channel_id": "5c897b3e639045ca6e314bbaff991f73", "main_cat_id": "ZkVKJwBqR6Ar", "youtube_channel_id": "UCB92N2VKhlyqWm9bFB3xpgQ", "strip": ["[^\\s가-힣A-Za-z0-9()\\[\\]]*\\([^()가-힣A-Za-z0-9]*\\)(?:\\s*[^\\s가-힣A-Za-z0-9()\\[\\]+:!?~.,&/-]+)*", "\\|[^가-힣A-Za-z0-9]*$", "(?<!\\S)-?[ෆ♡]+(?!\\S)", "\\[\\s*([^\\]]+?)\\s*\\]\\s*(?=\\1)"]},
     {"name": "포포포포", "owner": "main-only", "group": "ACAXIA", "chzzk_channel_id": "3e3781d3bd20dadc2f6f6d5d30091195", "main_cat_id": "UtnJjiDYT2Ll", "youtube_channel_id": "UC2w7ekaQwx-gocvbqD0M2Pg"},
     {"name": "하시요", "owner": "main-only", "group": "ACAXIA", "chzzk_channel_id": "b33c957eac9335d38e4043c3dca97675", "main_cat_id": "khCWkbKFBrUU"}
   ]
