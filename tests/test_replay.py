@@ -167,3 +167,19 @@ def test_merge_description_idempotent():
     d = replay.merge_description("<p>카페</p>", ["abc"])
     assert d.startswith("<p>카페</p>") and "/embed/abc" in d
     assert replay.merge_description(d, ["abc"]) == d
+
+
+def test_merge_titles():
+    """하루 여러 편: 같은 내용은 첫 편만, 다른 내용은 쉼표로, 길면 뒤쪽을 통째로 뺀다."""
+    assert replay.merge_titles(["사이코 슬루스 3화", "사이코 슬루스 3화"]) == "사이코 슬루스 3화"
+    assert replay.merge_titles(["사이코 슬루스 6화", "사이코 슬루스 -완"]) == "사이코 슬루스 6화"
+    assert replay.merge_titles(["짜짜썹 2일차", "3만분의1 : 버츄얼 생존 시뮬레이터"]) == "짜짜썹 2일차, 3만분의1 : 버츄얼 생존 시뮬레이터"
+    assert replay.merge_titles(["롤 렁 근판", "롤 내전"]) == "롤 렁 근판, 롤 내전"
+    long = ["가" * 50, "나" * 30, "다" * 30]
+    assert replay.merge_titles(long) == "가" * 50 + ", " + "나" * 30
+    assert replay.merge_titles(["가" * 120]) == "가" * 120
+
+
+def test_clean_title_part_markers_and_tag_strip():
+    assert replay.clean_title("(1/2) 사이코 슬루스 3화 / 전편") == "사이코 슬루스 3화"
+    assert replay.clean_title("찡켓몬2 3일차 [다톡방,마인크래프트]", [r"\s*\[[^\]]*\]\s*$"]) == "찡켓몬2 3일차"

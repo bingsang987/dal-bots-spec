@@ -207,6 +207,7 @@ _PART_RES = (
     re.compile(r"\(\s*\d+\s*/\s*\d+\s*\)"),          # (1/2)
     re.compile(r"(?<!\S)\d+\s*편(?!\S)"),              # 1편
     re.compile(r"\s*[-–]\s*\d+\s*부\s*$"),             # - 5부
+    re.compile(r"\s*/\s*[전후상중하]편\s*$"),          # / 전편, / 후편
 )
 _TAIL_RES = (
     re.compile(r"\s*[-–]\s*[^-–]*?\bFULL\s*다시\s*보기.*$", re.I),   # - 김진우 FULL 다시보기 #2
@@ -304,9 +305,43 @@ def parse_videos(videos: Iterable[dict], *, live_only: bool = False, strip: Iter
     return out
 
 
+_END_MARK = re.compile(r"\s*[-–(]\s*완\s*[-–)]?\s*$")   # '-완-' · '(완)' — 같은 내용인지 볼 때만 뗀다
+
+
+def _same_content(a: str, b: str) -> bool:
+    """앞 낱말들이 길게 겹치면 같은 방송 내용(같은 게임을 이어서 함)으로 본다:
+    겹치는 앞부분이 공백 빼고 4자 이상이고 짧은 쪽의 절반 이상."""
+    wa, wb = _END_MARK.sub("", a).split(), _END_MARK.sub("", b).split()
+    n = 0
+    for x, y in zip(wa, wb):
+        if x != y:
+            break
+        n += len(x)
+    short = min(len("".join(wa)), len("".join(wb)))
+    return short > 0 and n >= 4 and n * 2 >= short
+
+
+def merge_titles(titles: Iterable[str], limit: int = 90) -> str:
+    """하루 여러 편의 제목을 한 제목으로(사용자 지시 2026-11-17): 같은 제목은 한 번, 1부/2부나 전편/후편처럼
+    같은 내용이 이어진 편은 첫 편 제목만, 서로 다른 내용은 쉼표로. limit 을 넘기는 뒤쪽 제목은 통째로 뺀다
+    (중간에서 잘린 제목을 만들지 않는다 — 첫 제목은 길어도 넣는다)."""
+    kept: list[str] = []
+    for t in titles:
+        t = (t or "").strip()
+        if not t or any(t == k or _same_content(k, t) for k in kept):
+            continue
+        kept.append(t)
+    out = ""
+    for k in kept:
+        if out and len(out) + 2 + len(k) > limit:
+            break
+        out = f"{out}, {k}" if out else k
+    return out
+
+
 def replay_title(reps: list["Replay"]) -> str:
-    """하루 여러 편이면 쉼표로(같은 제목은 한 번)."""
-    return ", ".join(dict.fromkeys(r.title for r in reps if r.title)) or "방송"
+    """하루 여러 편이면 merge_titles 로 한 제목."""
+    return merge_titles(r.title for r in reps) or "방송"
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +507,7 @@ class LiveAction:
         return [r.open_ms for r in self.recs]
 
     def title(self, clean: Callable[[str], str] = lambda t: t) -> str:
-        return ", ".join(dict.fromkeys(t for t in (clean(r.title) for r in self.recs) if t)) or "방송"
+        return merge_titles(clean(r.title) for r in self.recs) or "방송"
 
 
 def plan_live(events: Iterable[dict], recs: Iterable[LiveRec], *, now_ms: int, since_ms: int,
