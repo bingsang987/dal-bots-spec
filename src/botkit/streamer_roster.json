@@ -5,7 +5,6 @@
     {"name": "다주", "owner": "chzzkvodbot", "chzzk_channel_id": "bdc57cc4217173f0e89f63fba2f1c6e5", "youtube_channel_id": "UCLsOJitXGX7jZheuGj777-A", "strip": ["\\s*\\[[^\\]]*\\]\\s*$"]},
     {"name": "윤가놈", "owner": "chzzkvodbot", "chzzk_channel_id": "1ad5aa0f6c6741b072528fad5e5e76b1", "youtube_channel_id": "UCl8lKwEXdYxIbZf-FVWmWKg"},
     {"name": "명예훈장", "owner": "chzzkvodbot", "chzzk_channel_id": "5d53f8fa5bef9b1bd4dc884f9907c079"},
-    {"name": "녹두로", "owner": "chzzkvodbot", "chzzk_channel_id": "6e06f5e1907f17eff543abd06cb62891", "youtube_channel_id": "UC9vz3TBChrJmYbzUo-rqfSg", "live_only": true},
     {"name": "독케익", "owner": "chzzkvodbot", "chzzk_channel_id": "b68af124ae2f1743a1dcbf5e2ab41e0b", "youtube_channel_id": "UCzdsBMcTdToWM4S72p49Dew", "strip": ["^\\s*독케익\\s+"]},
 
     {"name": "키유", "owner": "cluezvodbot", "chzzk_channel_id": "a3ceb9179d99be8d1e63b3e911fcd16b", "youtube_channel_id": "UCAnMqH4hdq5SSQCaD0FaIcQ"},
