@@ -183,3 +183,20 @@ def test_merge_titles():
 def test_clean_title_part_markers_and_tag_strip():
     assert replay.clean_title("(1/2) 사이코 슬루스 3화 / 전편") == "사이코 슬루스 3화"
     assert replay.clean_title("찡켓몬2 3일차 [다톡방,마인크래프트]", [r"\s*\[[^\]]*\]\s*$"]) == "찡켓몬2 3일차"
+
+
+def test_plan_length_does_not_steal_when_title_day_length_unknown():
+    """제목 날짜 일정의 길이를 모르면(창 밖이라 본문 안 읽음) 길이가 맞는 이웃 날 일정으로 옮기지 않는다."""
+    evs = [_ev("a", "2026-11-02T15:00"), _ev("b", "2026-11-03T17:00")]
+    r = Replay("v1", "2026-11-02", "버생 최대 위기", None, None, 0, length_s=728 * 60)
+    acts = replay.plan(evs, [r], now_ms=_ms("2026-11-17T00:00"), since_ms=_ms("2026-10-01T00:00"),
+                       durations={"b": 717 * 60})
+    assert [(a.event["id"], a.video_ids) for a in acts] == [("a", ["v1"])]
+
+
+def test_plan_keeps_placed_video_on_its_event():
+    evs = [_ev("a", "2026-11-02T15:00"), _ev("b", "2026-11-03T17:00")]
+    r = Replay("v1", "2026-11-03", "제목", None, None, 0)
+    kw = dict(now_ms=_ms("2026-11-17T00:00"), since_ms=_ms("2026-10-01T00:00"))
+    assert [(a.event["id"]) for a in replay.plan(evs, [r], placed={"v1": "a"}, **kw)] == ["a"]
+    assert replay.plan(evs, [r], placed={"v1": "gone"}, **kw) == []

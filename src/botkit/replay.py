@@ -389,15 +389,21 @@ def _day_shift(date: str, n: int) -> str:
 def plan(events: Iterable[dict], replays: Iterable[Replay], *, now_ms: int, since_ms: int,
          skip: Callable[[dict], bool] = lambda ev: False,
          applied_ids: Optional[set[str]] = None, own_event_ids: Optional[set[str]] = None,
-         durations: Optional[dict[str, int]] = None, length_tol: float = 0.12) -> list[Action]:
+         durations: Optional[dict[str, int]] = None, length_tol: float = 0.12,
+         placed: Optional[dict[str, str]] = None) -> list[Action]:
     """다시보기를 진실원본 일정에 짝짓는다(위 모듈 설명). 미래 일정, skip 일정은 대상 아님.
     종일 일정은 봇이 다시보기로 만든 것(own_event_ids)만 대상. applied_ids(이미 처리한 영상)만으로 이뤄진
     '새 일정' 제안은 내지 않는다 — 사람이 지운 일정을 다시 만들지 않게.
     durations {event_id: 그 일정에 붙은 VOD 길이 합(초)} 를 주면, 시각 없는 영상은 먼저 제목 날짜 앞뒤 하루 안에서
-    VOD 길이가 영상 길이와 length_tol 안으로 가장 비슷한 일정에 붙인다(자정 넘긴 방송의 날짜 어긋남 대응)."""
+    VOD 길이가 영상 길이와 length_tol 안으로 가장 비슷한 일정에 붙인다(자정 넘긴 방송의 날짜 어긋남 대응).
+    단 제목 날짜의 일정 중 길이를 모르는 것이 있으면 제목 날짜를 믿는다 — 길이를 아는 이웃 날 일정이 영상을
+    가져가 버린다(창 밖이라 본문을 안 읽은 일정, 아리사 11-02 영상이 11-03 일정에 붙음 2026-11-17).
+    placed {영상 id: 일정 id} = 전에 붙인 자리. 한 번 붙인 영상은 다른 일정으로 옮기지 않는다(그 일정이 목록에
+    없으면 그 영상은 건너뜀 — 창 밖이거나 사람이 지움)."""
     applied_ids = applied_ids or set()
     own_event_ids = own_event_ids or set()
     durations = durations or {}
+    placed = placed or {}
     cands: dict[str, list[dict]] = {}
     for ev in events:
         if skip(ev) or (ev.get("allDay") and ev.get("id") not in own_event_ids):
@@ -417,13 +423,22 @@ def plan(events: Iterable[dict], replays: Iterable[Replay], *, now_ms: int, sinc
     def put(ev: dict, date: str, r: Replay) -> None:
         groups.setdefault(ev["id"], Action(ev, date)).replays.append(r)
 
+    by_id = {e["id"]: e for evs_ in cands.values() for e in evs_ if e.get("id")}
     for date, reps in sorted(by_date.items()):
         timed = [r for r in reps if r.start_ms]
         reps = sorted(timed or reps, key=lambda r: (r.start_ms or 0, r.published_ms))
         evs = sorted(cands.get(date, []), key=_ev_ms)
         rest: list[Replay] = []
         for r in reps:
+            if r.video_id in placed:
+                home = by_id.get(placed[r.video_id])
+                if home is not None:
+                    put(home, event_day(home), r)
+                continue
             if r.start_ms or not r.length_s or not durations:
+                rest.append(r)
+                continue
+            if any(not durations.get(e.get("id")) for e in evs):
                 rest.append(r)
                 continue
             near = [e for d in (_day_shift(date, -1), date, _day_shift(date, 1)) for e in cands.get(d, [])
@@ -634,6 +649,16 @@ def record(conn: sqlite3.Connection, member: str, event_id: str, video_ids: Iter
         "updated_at=excluded.updated_at",
         (member, event_id, ",".join(video_ids), title, datetime.now(KST).isoformat(timespec="seconds")))
     conn.commit()
+
+
+def placed(conn: sqlite3.Connection, member: str) -> dict[str, str]:
+    """{영상 id: 붙인 일정 id} — plan 의 placed."""
+    out: dict[str, str] = {}
+    for eid, ids in conn.execute("SELECT event_id, video_ids FROM replay_applied WHERE member=?", (member,)):
+        for x in (ids or "").split(","):
+            if x:
+                out.setdefault(x, eid)
+    return out
 
 
 def applied(conn: sqlite3.Connection, member: str) -> tuple[set[str], set[str]]:
