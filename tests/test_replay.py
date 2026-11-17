@@ -150,6 +150,19 @@ def test_next_title_protects_human_edit():
     assert replay.is_done(conn, "m", "e", ["v1"], "엘든링")
 
 
+def test_is_done_follows_youtube_retitle():
+    """붙인 영상은 그대로인데 유튜브 제목이 바뀌면 다시 처리(사람이 고친 제목은 next_title 이 지킨다)."""
+    conn = sqlite3.connect(":memory:")
+    replay.ensure_schema(conn)
+    replay.record(conn, "m", "e", ["v1", "v2"], "퀸즈 도메인")
+    assert replay.is_done(conn, "m", "e", ["v1", "v2"], "퀸즈 도메인", "퀸즈 도메인")
+    assert not replay.is_done(conn, "m", "e", ["v1", "v2"], "퀸즈 도메인", "여왕의 영지 1화")
+    assert replay.next_title(conn, "m", "e", "퀸즈 도메인", "여왕의 영지 1화") == "여왕의 영지 1화"
+    assert replay.is_done(conn, "m", "e", ["v1"], "퀸즈 도메인", "v1 제목만")        # 일부만 잡힌 run — 그대로
+    assert replay.is_done(conn, "m", "e", [], "퀸즈 도메인", "VOD 제목")             # VOD 제목 단계 — 그대로
+    assert replay.next_title(conn, "m", "e", "사람이 고침", "여왕의 영지 1화") is None
+
+
 def test_merge_description_idempotent():
     d = replay.merge_description("<p>카페</p>", ["abc"])
     assert d.startswith("<p>카페</p>") and "/embed/abc" in d

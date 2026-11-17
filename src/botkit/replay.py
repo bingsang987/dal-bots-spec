@@ -560,14 +560,22 @@ def last_bot_title(conn: sqlite3.Connection, member: str, event_id: str) -> Opti
     return row[0] if row else None
 
 
-def is_done(conn: sqlite3.Connection, member: str, event_id: str, video_ids: Iterable[str], current: str) -> bool:
-    """이미 이 영상들을 붙였고 제목도 봇이 쓴 그대로면 True — 본문을 다시 읽지 않고 건너뛴다(조회 수 절약)."""
+def is_done(conn: sqlite3.Connection, member: str, event_id: str, video_ids: Iterable[str], current: str,
+            wanted: Optional[str] = None) -> bool:
+    """이미 이 영상들을 붙였고 제목도 봇이 쓴 그대로면 True — 본문을 다시 읽지 않고 건너뛴다(조회 수 절약).
+    wanted(이번에 계산한 제목)를 주면: 붙인 영상이 그대로인데 제목만 달라졌을 때 False — 유튜브에서 영상 제목을
+    고친 경우(라이브 탭 채널이 생방송 기록 제목을 나중에 고침)를 따라간다. 영상이 일부만 잡힌 run 은 건드리지 않는다."""
     row = conn.execute("SELECT video_ids, bot_title FROM replay_applied WHERE member=? AND event_id=?",
                        (member, event_id)).fetchone()
     if not row:
         return False
     done = {x for x in (row[0] or "").split(",") if x}
-    return set(video_ids) <= done and row[1] == current
+    vids = set(video_ids)
+    if not (vids <= done and row[1] == current):
+        return False
+    if wanted is not None and vids and vids == done and wanted != current:
+        return False
+    return True
 
 
 def next_title(conn: sqlite3.Connection, member: str, event_id: str, current: str, wanted: str) -> Optional[str]:
