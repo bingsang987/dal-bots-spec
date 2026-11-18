@@ -52,9 +52,15 @@ _SECRET_RE = re.compile(
 )
 
 
+# 디스코드 웹훅은 토큰이 쿼리가 아니라 URL 경로에 있다(/api/webhooks/{id}/{token}) → requests 예외 문자열에
+# 그대로 실린다(dalbots-bmi.247). id 와 토큰을 통째로 가린다.
+_WEBHOOK_RE = re.compile(r"(/api(?:/v\d+)?/webhooks/)\d+/[A-Za-z0-9._-]+", re.IGNORECASE)
+
+
 def mask_secrets(text: str) -> str:
-    """`api_key|serviceKey|apiKeyNm|token|secret|?key|&key` = 값 → `=***`."""
-    return _SECRET_RE.sub(lambda m: f"{m.group(1)}=***", str(text))
+    """`api_key|serviceKey|apiKeyNm|token|secret|?key|&key` = 값 → `=***`, 디스코드 웹훅 URL 의 id/토큰 → `***`."""
+    text = _SECRET_RE.sub(lambda m: f"{m.group(1)}=***", str(text))
+    return _WEBHOOK_RE.sub(lambda m: f"{m.group(1)}***", text)
 
 
 class MaskingFormatter(logging.Formatter):

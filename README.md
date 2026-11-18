@@ -81,6 +81,10 @@ if __name__ == "__main__":
 
 기존 봇 state 이관: `SyncState(path, topic_id).import_legacy([(key, event_id), …])` — hash는 비워 두어 첫 run에 1회 PATCH로 서버와 맞춘다. Discord 커서는 `CursorStore.import_legacy({channel_id: last_message_id})`.
 
+같은 일정의 key가 나중에 바뀌는 봇(예: 다시보기 날짜 key → 방송 시작 시각 key)은 sync 전에 `engine.state.rekey(옛 key, 새 key)`로 state 행을 옮긴다. 엔진이 같은 event_id를 PATCH로 잇는다. `absent="keep"` 엔진에서 key가 바뀌면 옛 일정이 남고 새로 생성돼 중복이 되기 때문이다. dry-run이면 먼저 `engine.state.to_memory()`.
+
+`mask_secrets`(alert·로그 포맷터)는 쿼리의 키 값과 디스코드 웹훅 URL 경로의 id/토큰을 가린다.
+
 테스트: `python -m pytest tests` (가짜 dal.wiki 위에서 SyncEngine 시나리오·llm_json 파싱·`_iso_z`·catchup 커서 정책).
 
 ## 문서 구조

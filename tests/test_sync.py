@@ -188,6 +188,43 @@ def test_content_hash_reflects_guards_and_normalization(soon):
     assert c.content_hash() == b.content_hash()     # 문자열 입력도 .000Z 정규화 후 해시
 
 
+def test_state_rekey_keeps_event_id(tmp_path, soon):
+    # key 가 바뀌는 일정(다시보기 날짜 key → 방송 시각 key)이 기존 event_id 를 이어받는다(dalbots-bmi.239)
+    iso = soon.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    s = SyncState(tmp_path / "s.db", TOPIC)
+    other = SyncState(tmp_path / "s.db", "OTHER")
+    s.put("c:yt:2026-11-10", "id-yt", "h1", "다시보기", iso)
+    s.put("c:999", "id-live", "h2", "방송", iso)
+    other.put("c:yt:2026-11-10", "id-other", "h3", "다시보기", iso)
+    assert s.rekey("c:yt:2026-11-10", "c:123") is True
+    row = s.get("c:123")
+    assert row.event_id == "id-yt" and row.content_hash == "h1" and s.get("c:yt:2026-11-10") is None
+    assert other.get("c:yt:2026-11-10").event_id == "id-other"      # 다른 토픽 행은 그대로
+    assert s.rekey("c:yt:2026-11-10", "c:456") is False               # 옛 key 없음
+    assert s.rekey("c:123", "c:999") is False                         # 새 key 가 이미 있음 → 덮지 않는다
+    assert s.get("c:123").event_id == "id-yt" and s.get("c:999").event_id == "id-live"
+    assert s.rekey("c:123", "c:123") is False
+
+
+def test_rekey_then_sync_patches_instead_of_creating(fake_dal, tmp_path, soon):
+    # keep 엔진: 옛 key 로 만든 일정이 새 key, 새 시작 시각으로 바뀌어도 PATCH 1건(중복 생성 없음)
+    engine = SyncEngine(TOPIC, tmp_path / "s.db", dry_run=False, absent="keep",
+                        cache_days_back=5, cache_days_forward=30)
+    engine.sync([mk("c:yt:2026-11-10", "다시보기 제목", soon)])
+    eid = engine.state.get("c:yt:2026-11-10").event_id
+    assert engine.state.rekey("c:yt:2026-11-10", "c:123") is True
+    st = engine.sync([mk("c:123", "다시보기 제목", soon + timedelta(hours=3))])
+    assert st.created == 0 and st.updated == 1 and st.absent_kept == 0
+    assert len(fake_dal.paths("/events/create")) == 1 and len(fake_dal.events) == 1
+    assert engine.state.get("c:123").event_id == eid
+    # rekey 없이 같은 일을 하면 옛 일정이 남고 새로 하나 더 생긴다(고치기 전 동작)
+    engine2 = SyncEngine(TOPIC, tmp_path / "s2.db", dry_run=False, absent="keep",
+                         cache_days_back=5, cache_days_forward=30)
+    engine2.sync([mk("d:yt:2026-11-10", "다른 다시보기", soon)])
+    st2 = engine2.sync([mk("d:123", "다른 다시보기", soon + timedelta(hours=3))])
+    assert st2.created == 1 and st2.absent_kept == 1
+
+
 def test_state_import_legacy_and_forget_before(tmp_path, soon):
     s = SyncState(tmp_path / "s.db", TOPIC)
     assert s.import_legacy([("a", "id-a"), ("b", "id-b"), ("", "x")]) == 2

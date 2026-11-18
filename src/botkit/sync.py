@@ -233,6 +233,23 @@ class SyncState:
         self.conn.execute("DELETE FROM sync_state WHERE topic_id=? AND key=?", (self.topic_id, key))
         self.conn.commit()
 
+    def rekey(self, old_key: str, new_key: str) -> bool:
+        """state 행의 key 만 바꾼다(event_id·hash·시각 그대로, dal.wiki 는 건드리지 않음). 바꿨으면 True.
+
+        같은 일정의 key 가 나중에 바뀌는 봇(예: 다시보기 날짜 key → 방송 시작 시각 key)이 sync 전에 불러
+        새 key 가 기존 event_id 를 이어받게 한다 — 안 그러면 `absent="keep"` 엔진에서는 옛 일정이 남고 새 key 로
+        또 생성돼 중복이 된다(dalbots-bmi.239). 옛 key 가 없거나 새 key 가 이미 있으면 아무것도 안 하고 False.
+        dry-run 이면 호출자가 먼저 `to_memory()` 로 메모리 사본으로 바꾼 뒤 부른다(파일 불변).
+        """
+        if not old_key or not new_key or old_key == new_key:
+            return False
+        if self.get(old_key) is None or self.get(new_key) is not None:
+            return False
+        self.conn.execute("UPDATE sync_state SET key=? WHERE topic_id=? AND key=?",
+                          (new_key, self.topic_id, old_key))
+        self.conn.commit()
+        return True
+
     def all(self) -> dict[str, StateRow]:
         rows = self.conn.execute(
             "SELECT key, event_id, content_hash, summary, start_iso, first_seen, last_seen "

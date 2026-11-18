@@ -100,6 +100,17 @@ def test_mask_secrets_patterns():
     assert "실패 key=k1" in s                                  # 봇 키 로그는 보존
 
 
+def test_mask_secrets_discord_webhook_path():
+    # 웹훅 토큰은 URL 경로에 있다 — requests 예외 문자열로 로그에 실리는 것을 가린다(dalbots-bmi.247)
+    from botkit.run import mask_secrets
+    s = mask_secrets("404 Client Error: Not Found for url: "
+                     "https://discord.com/api/webhooks/123456789012345678/AbC-dEf_012.xyz/messages/99?wait=true "
+                     "| https://discordapp.com/api/v10/webhooks/42/tok-EN")
+    assert "AbC-dEf_012.xyz" not in s and "123456789012345678" not in s and "tok-EN" not in s
+    assert "https://discord.com/api/webhooks/***/messages/99?wait=true" in s
+    assert "https://discordapp.com/api/v10/webhooks/***" in s
+
+
 def test_alert_masks_secrets(capsys, monkeypatch):
     monkeypatch.setattr(runmod, "_current_bot", "housingbot")
     line = alert("HTTPError for url: https://apis.data.go.kr/x?serviceKey=REALKEY123&numOfRows=10", discord=False)
