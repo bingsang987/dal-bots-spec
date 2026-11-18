@@ -75,6 +75,30 @@ def test_fetch_live_open_parses_content(monkeypatch):
     assert vod.fetch_live_open("4") is None
 
 
+def test_fetch_live_open_unavailable(monkeypatch):
+    """치지직이 '이용할 수 없는 동영상'이라고 답하면 실패(None)가 아니라 UNAVAILABLE."""
+    class R:
+        def __init__(self, sc, body):
+            self.status_code, self._b = sc, body
+
+        def json(self):
+            if self._b is None:
+                raise ValueError("no json")
+            return self._b
+
+    bodies = {
+        "5": R(400, {"code": 400, "message": "이용할 수 없는 동영상입니다."}),
+        "6": R(404, {"code": 404, "message": "없음"}),
+        "7": R(400, None),                        # 본문 없는 400 → 일시 실패로
+        "8": R(429, {"code": 429}),
+    }
+    monkeypatch.setattr(vod.requests, "get", lambda url, **kw: bodies[url.rsplit("/", 1)[1]])
+    assert vod.fetch_live_open("5") == vod.UNAVAILABLE
+    assert vod.fetch_live_open("6") == vod.UNAVAILABLE
+    assert vod.fetch_live_open("7") is None
+    assert vod.fetch_live_open("8") is None
+
+
 def test_split_title_helpers():
     assert vod.split_part(P1["videoTitle"]) == 1
     assert vod.split_part(P2["videoTitle"]) == 2
@@ -138,6 +162,32 @@ def test_resolve_starts_failure_falls_back_and_counts(conn):
     # 성공하면 실패 기록 해제
     vod.resolve_starts([dict(P2)], vod.VodMeta(conn), Fetch({"15802356": LIVE_1021}), sleep=0)
     assert vod.VodMeta(conn).failing(1) == []
+
+
+def test_resolve_starts_unavailable_is_not_failure(conn):
+    """이용 불가 VOD: 실패로 세지 않고, 연속 실패 경보에 안 잡히고, 캐시되며, drop_unavailable 이면 목록에서 빠진다."""
+    # 실패가 쌓여 있던 VOD 가 이용 불가로 확인되면 경보 대상에서 빠진다
+    for _ in range(3):
+        vod.resolve_starts([dict(P2)], vod.VodMeta(conn), Fetch({}), sleep=0)
+    assert vod.VodMeta(conn).failing(3) == [("15802356", 3)]
+    vods = [dict(P1), dict(P2)]
+    f = Fetch({"15802003": LIVE_1021, "15802356": vod.UNAVAILABLE})
+    assert vod.resolve_starts(vods, vod.VodMeta(conn), f, sleep=0) == 0
+    assert vods[1]["_start_source"] == "unavailable" and "live_open_ms" not in vods[1]
+    assert vods[1]["start_ms"] == vods[1]["_est_start_ms"]
+    assert vod.VodMeta(conn).failing(1) == []
+    # 캐시 → 다음 run 상세 호출 없음, drop_unavailable 이면 빠진다
+    f2 = Fetch({})
+    vods2 = [dict(P1), dict(P2)]
+    assert vod.resolve_starts(vods2, vod.VodMeta(conn), f2, sleep=0, drop_unavailable=True) == 0
+    assert f2.calls == []
+    assert [v["videoNo"] for v in vods2] == [P1["videoNo"]]
+    # 오래된 이용 불가 기록은 다시 조회한다(풀렸을 수 있음)
+    conn.execute("UPDATE vod_meta SET fetched_at='2000-01-01T00:00:00Z' WHERE video_no='15802356'")
+    f3 = Fetch({"15802356": LIVE_1021})
+    vods3 = [dict(P2)]
+    vod.resolve_starts(vods3, vod.VodMeta(conn), f3, sleep=0, drop_unavailable=True)
+    assert f3.calls == ["15802356"] and vods3[0]["_start_source"] == "live_open"
 
 
 def test_resolve_starts_fetch_none_injection(conn):

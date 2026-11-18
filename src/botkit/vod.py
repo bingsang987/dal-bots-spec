@@ -372,6 +372,10 @@ CHZZK_VIDEO_API = "https://api.chzzk.naver.com/service/v2/videos"
 KST = timezone(timedelta(hours=9))
 SPLIT_TITLE_RE = re.compile(r"^\s*\d{4}년\s*\d{1,2}월\s*\d{1,2}일\s*(\d+)부\s*")
 _UA = "Mozilla/5.0 (dalwiki-botkit)"
+# 상세 API 가 '이용할 수 없는 동영상입니다'(HTTP 400/404 + code 400/404)로 답한 VOD — 목록에는 남아 있지만
+# 블라인드, 비공개 등으로 볼 수 없다. 실패가 아니므로 재시도 경보를 내지 않는다(2026-11-18 포포포포 15718492).
+UNAVAILABLE = -1
+UNAVAILABLE_RECHECK_DAYS = 7   # 이용 불가 기록은 이만큼 지나면 상세를 다시 불러 본다(다시 풀리는 경우)
 
 
 def parse_live_open(raw: Optional[str]) -> Optional[int]:
@@ -391,12 +395,21 @@ def fetch_live_open(video_no, *, timeout: float = 10, session=None) -> Optional[
     Returns:
         int > 0 — 라이브 시작 시각
         0       — 상세는 받았지만 liveOpenDate 가 없음(UPLOAD 등 라이브 다시보기가 아님) → 추정값을 써도 된다
+        -1      — UNAVAILABLE: 치지직이 '이용할 수 없는 동영상'이라고 답함(블라인드, 비공개). 실패 아님
         None    — 실패(네트워크·비200·code≠200·형태 이상). 다음 run 재시도
     """
     url = f"{CHZZK_VIDEO_API}/{video_no}"
     try:
         r = (session or requests).get(url, headers={"User-Agent": _UA}, timeout=timeout)
         if r.status_code != 200:
+            if r.status_code in (400, 404):
+                try:
+                    body = r.json()
+                except Exception:
+                    body = None
+                if isinstance(body, dict) and body.get("code") in (400, 404):
+                    logger.info(f"fetch_live_open {video_no}: 이용 불가({body.get('message') or r.status_code})")
+                    return UNAVAILABLE
             logger.warning(f"fetch_live_open {video_no}: HTTP {r.status_code}")
             return None
         data = r.json()
@@ -434,7 +447,8 @@ class VodMeta:
     """vod_meta 캐시 — videoNo 하나당 상세 API 한 번.
 
         vod_meta(video_no PK, live_open_ms, title, duration, fetched_at, fail_count)
-        live_open_ms: >0 라이브 시작 / 0 라이브 아님(UPLOAD) / NULL 상세 실패(fail_count 누적, 다음 run 재시도)
+        live_open_ms: >0 라이브 시작 / 0 라이브 아님(UPLOAD) / -1 이용 불가(UNAVAILABLE_RECHECK_DAYS 뒤 다시 조회) /
+                      NULL 상세 실패(fail_count 누적, 다음 run 재시도)
 
     dry_run=True 면 테이블을 만들지 않고 DB 에 쓰지 않는다(테이블이 있으면 읽기는 한다, 새 값은 메모리).
     hits/fetched/failed 는 이 인스턴스의 누계(로그용 — 상세 호출 수 = fetched + failed).
@@ -474,8 +488,14 @@ class VodMeta:
             return self._mem[vno]
         if not self._table:
             return None
-        row = self.conn.execute("SELECT live_open_ms FROM vod_meta WHERE video_no=?", (vno,)).fetchone()
-        return row[0] if row and row[0] is not None else None
+        row = self.conn.execute("SELECT live_open_ms, fetched_at FROM vod_meta WHERE video_no=?", (vno,)).fetchone()
+        if not row or row[0] is None:
+            return None
+        if row[0] == UNAVAILABLE:
+            limit = (datetime.now(timezone.utc) - timedelta(days=UNAVAILABLE_RECHECK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if (row[1] or "") < limit:
+                return None   # 오래된 이용 불가 기록 → 다시 조회
+        return row[0]
 
     def put(self, video_no, live_open_ms: int, title: str = "", duration: int = 0) -> None:
         vno = str(video_no)
@@ -541,6 +561,7 @@ def resolve_starts(
     fetch: Optional[Callable[[str], Optional[int]]] = fetch_live_open,
     *,
     sleep: float = 0.1,
+    drop_unavailable: bool = False,
 ) -> int:
     """각 VOD dict(목록 API 항목: videoNo·publishDateAt·duration)에 시작 시각을 정한다(in-place). 상세 실패 수 반환.
 
@@ -548,7 +569,10 @@ def resolve_starts(
         v["live_open_ms"]   — 라이브 시작(있을 때만 키가 생긴다)
         v["_est_start_ms"]  — 옛 추정값(로그·비교용)
         v["_start_source"]  — "live_open" | "no_live"(상세 OK, liveOpenDate 없음 = UPLOAD 등 → 추정값이 맞다) |
-                              "estimated"(상세 실패 → 호출자는 이번 run 매칭·생성 보류, 다음 run 재시도)
+                              "estimated"(상세 실패 → 호출자는 이번 run 매칭·생성 보류, 다음 run 재시도) |
+                              "unavailable"(치지직이 이용 불가라고 답함 — 실패로 세지 않는다. start_ms 는 옛 추정)
+    drop_unavailable=True 면 이용 불가 VOD 를 vods 에서 뺀다(in-place) — 볼 수 없는 영상 링크를 일정에 붙이지 않는
+    VOD 첨부 봇용. 방송 기록용(chzzkarchivebot)은 기본값 그대로 두고 추정 시각을 쓴다.
 
     캐시(meta)에 있는 videoNo 는 상세를 부르지 않는다. 실패는 meta.record_failure 로 누적한다.
     fetch=None 이면 상세를 부르지 않고 캐시 미스를 전부 실패로 친다(장애 시뮬레이션용).
@@ -577,13 +601,21 @@ def resolve_starts(
                 meta.put(vno, lo, v.get("videoTitle", ""), v.get("duration") or 0)
             if fetch is not None and sleep:
                 time.sleep(sleep)
-        if lo:
+        if lo == UNAVAILABLE:
+            v["start_ms"] = est
+            v["_start_source"] = "unavailable"
+        elif lo:
             v["live_open_ms"] = int(lo)
             v["start_ms"] = int(lo)
             v["_start_source"] = "live_open"
         else:
             v["start_ms"] = est
             v["_start_source"] = "no_live" if lo == 0 else "estimated"
+    if drop_unavailable:
+        gone = [str(v.get("videoNo")) for v in vods if v.get("_start_source") == "unavailable"]
+        if gone:
+            logger.info(f"이용 불가 VOD {len(gone)}건 제외: {', '.join(gone[:5])}" + (" …" if len(gone) > 5 else ""))
+            vods[:] = [v for v in vods if v.get("_start_source") != "unavailable"]
     return failed
 
 
